@@ -2,226 +2,261 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import warnings
 
-# layout="centered" ist optimal für Smartphone-Displays
-st.set_page_config(page_title="My Fundamental App", page_icon="📱", layout="centered")
+# Warnungen unterdrücken, damit die App nicht mit roten Texten vollgemüllt wird
+warnings.filterwarnings('ignore')
 
-# --- HINTERGRUND-DATEN FÜR DEN SCREENER ---
-# Da yfinance nicht "alle Aktien der Welt" auf einmal abfragen kann, 
-# definieren wir hier ein starkes globales Universum, das automatisch gescannt wird.
-GLOBAL_UNIVERSE = [
-    "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "BRK-B", "JPM", "V", # USA
-    "SAP", "SIE.DE", "ALV.DE", "BMW.DE", "MUV2.DE", "DTE.DE", # Deutschland
-    "ASML.AS", "MC.PA", "OR.PA", "NESN.SW", "NOVN.SW", "NVO", # Europa Rest
-    "TSM", "TM", "SONY", "BABA" # Asien
-]
+# Seiten-Konfiguration
+st.set_page_config(page_title="Funda-App", page_icon="📊", layout="wide")
 
-@st.cache_data(ttl=3600)
-def get_stock_data_full(ticker_symbol):
-    """
-    Holt ALLE Daten für die Einzelanalyse: Finanzberichte, Info, Insider.
-    """
+st.title("📊 Funda-App")
+
+# --- HILFSFUNKTIONEN FÜR DATENABRUF ---
+@st.cache_data(ttl=3600)  # Speichert die Daten für 1 Stunde im Cache
+def load_stock_data(ticker_symbol):
     try:
         stock = yf.Ticker(ticker_symbol)
         
-        # Basis-Info
+        # Alle relevanten Berichte abrufen
         info = stock.info
-        
-        # Finanzberichte (Quartal)
-        guv = stock.quarterly_financials
-        bilanz = stock.quarterly_balance_sheet
-        cashflow = stock.quarterly_cashflow
-        
-        # Insider
+        guv_a = stock.financials
+        guv_q = stock.quarterly_financials
+        bilanz_a = stock.balance_sheet
+        bilanz_q = stock.quarterly_balance_sheet
+        cf_a = stock.cashflow
+        cf_q = stock.quarterly_cashflow
         insider = stock.major_holders
         
+        # Eigene Berechnungen (ROIC & ROC) - stark vereinfacht basierend auf verfügbaren yfinance Daten
+        try:
+            ebit = info.get('ebitda', 0) # Fallback auf EBITDA, falls EBIT fehlt
+            total_assets = info.get('totalAssets', bilanz_a.loc['Total Assets'].iloc[0] if 'Total Assets' in bilanz_a.index else 1)
+            current_liabilities = bilanz_a.loc['Current Liabilities'].iloc[0] if 'Current Liabilities' in bilanz_a.index else 0
+            net_working_capital = (bilanz_a.loc['Current Assets'].iloc[0] if 'Current Assets' in bilanz_a.index else 0) - current_liabilities
+            fixed_assets = total_assets - (bilanz_a.loc['Current Assets'].iloc[0] if 'Current Assets' in bilanz_a.index else 0)
+            
+            # Greenblatt ROC = EBIT / (Net Working Capital + Net Fixed Assets)
+            roc = ebit / (net_working_capital + fixed_assets) if (net_working_capital + fixed_assets) > 0 else np.nan
+            
+            # ROIC = NOPAT / Invested Capital (Hier vereinfacht als EBIT / (Total Assets - Current Liabilities))
+            invested_capital = total_assets - current_liabilities
+            roic = ebit / invested_capital if invested_capital > 0 else np.nan
+            
+        except:
+            roc = np.nan
+            roic = np.nan
+
         return {
             "info": info,
-            "guv": guv,
-            "bilanz": bilanz,
-            "cashflow": cashflow,
-            "insider": insider
+            "guv_q": guv_q,
+            "guv_a": guv_a,
+            "bilanz_q": bilanz_q,
+            "bilanz_a": bilanz_a,
+            "cashflow_q": cf_q,
+            "cashflow_a": cf_a,
+            "insider": insider,
+            "calc_roc": roc,
+            "calc_roic": roic
         }
     except Exception as e:
         return None
 
 @st.cache_data(ttl=3600)
-def run_screener_scan(tickers):
-    """
-    Scannt unsere hinterlegte Liste an Aktien für den Screener.
-    """
-    results = []
+def load_screener_data():
+    # Globale Watchlist (automatisch gescannt)
+    tickers = [
+        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", 
+        "SAP", "SIE.DE", "ALV.DE", "VOW3.DE", "ASML", "LVMUY", 
+        "TCEHY", "BABA", "TSM", "NVO", "JNJ", "JPM", "V"
+    ]
     
+    data_list = []
     for t in tickers:
         try:
             stock = yf.Ticker(t)
             info = stock.info
             
-            country = info.get('country', 'Unknown')
-            market_cap = info.get('marketCap', 0) / 1_000_000_000 # in Milliarden
-            kgv = info.get('trailingPE', 0)
-            kbv = info.get('priceToBook', 0)
-            
-            # Für ROIC & ROC brauchen wir rudimentäre Bilanz/GuV Daten (Jahresbasis reicht hier für den Speed)
-            bs = stock.balance_sheet
-            fin = stock.financials
-            
-            roic = 0
-            roc = 0
-            
-            if not bs.empty and not fin.empty:
-                # Versuch der Berechnung, wenn Daten vorhanden
-                op_inc = fin.loc['Operating Income'].iloc[0] if 'Operating Income' in fin.index else 0
-                tot_assets = bs.loc['Total Assets'].iloc[0] if 'Total Assets' in bs.index else 0
-                curr_liab = bs.loc['Current Liabilities'].iloc[0] if 'Current Liabilities' in bs.index else 0
-                curr_assets = bs.loc['Current Assets'].iloc[0] if 'Current Assets' in bs.index else 0
-                net_ppe = bs.loc['Net PPE'].iloc[0] if 'Net PPE' in bs.index else 0
+            # Wenn MCap fehlt, überspringen
+            if 'marketCap' not in info or info['marketCap'] is None:
+                continue
                 
-                inv_cap = tot_assets - curr_liab
-                if inv_cap > 0:
-                    roic = (op_inc / inv_cap) * 100
-                    
-                cap_emp = (curr_assets - curr_liab) + net_ppe
-                if cap_emp > 0:
-                    roc = (op_inc / cap_emp) * 100
-
-            results.append({
+            data_list.append({
                 "Ticker": t,
-                "Unternehmen": info.get('shortName', t),
-                "Land": country,
-                "Market Cap": market_cap,
-                "KGV": kgv if kgv is not None else 0,
-                "KBV": kbv if kbv is not None else 0,
-                "ROIC %": roic,
-                "ROC %": roc
+                "Name": info.get("shortName", t),
+                "Land": info.get("country", "Unbekannt"),
+                "M.Cap (Mrd $)": info.get("marketCap", 0) / 1e9,
+                "KGV": info.get("trailingPE", np.nan),
+                "KBV": info.get("priceToBook", np.nan),
+                "Marge (%)": info.get("operatingMargins", 0) * 100 if info.get("operatingMargins") else np.nan,
+                "ROE (%)": info.get("returnOnEquity", 0) * 100 if info.get("returnOnEquity") else np.nan,
+                "Div. Rendite (%)": info.get("dividendYield", 0) * 100 if info.get("dividendYield") else 0
             })
         except:
-            continue # Bei Fehler mit einer Aktie einfach zur nächsten springen
+            continue
             
-    return pd.DataFrame(results)
+    df = pd.DataFrame(data_list)
+    # NaN Werte sicherheitshalber auffüllen oder belassen
+    return df
 
 
-st.title("📊 Funda-App")
-
-# Zwei Haupt-Tabs
+# --- HAUPT-LAYOUT (TABS) ---
 tab1, tab2 = st.tabs(["🔍 Einzel-Analyse", "🎯 Screener"])
 
 with tab1:
-    st.subheader("Aktie analysieren")
-    ticker_input = st.text_input("Ticker-Symbol eingeben (z.B. AAPL, SIE.DE):", value="AAPL")
+    st.header("Aktie analysieren")
+    ticker_input = st.text_input("Ticker-Symbol eingeben (z.B. AAPL, MSFT, SAP):").upper()
     
-    if st.button("Analysieren", use_container_width=True):
-        with st.spinner('Lade alle Berichte & Insider-Daten...'):
-            data = get_stock_data_full(ticker_input.upper())
+    if ticker_input:
+        data = load_stock_data(ticker_input)
+        
+        if data and data['info']:
+            info = data['info']
+            st.success(f"Daten für **{info.get('shortName', ticker_input)}** ({info.get('country', 'N/A')}) geladen!")
             
-            if data is not None and data['info']:
-                st.success(f"Daten für {data['info'].get('shortName', ticker_input.upper())} geladen!")
+            # --- TOP METRIKEN ---
+            mcap = info.get('marketCap', 0) / 1e9
+            kgv = info.get('trailingPE', np.nan)
+            kbv = info.get('priceToBook', np.nan)
+            roic = data['calc_roic'] * 100 if not np.isnan(data['calc_roic']) else np.nan
+            roc = data['calc_roc'] * 100 if not np.isnan(data['calc_roc']) else np.nan
+            
+            # Eigener "Power Score" (Beispiel: Marge + ROE)
+            marge = info.get('operatingMargins', 0) * 100 if info.get('operatingMargins') else 0
+            roe = info.get('returnOnEquity', 0) * 100 if info.get('returnOnEquity') else 0
+            power_score = marge + roe
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("KGV", f"{kgv:.1f}" if pd.notna(kgv) else "N/A")
+            col2.metric("KBV", f"{kbv:.1f}" if pd.notna(kbv) else "N/A")
+            col3.metric("M.Cap", f"${mcap:.1f}B" if mcap > 0 else "N/A")
+            
+            col4, col5, col6 = st.columns(3)
+            col4.metric("ROIC (ca.)", f"{roic:.1f}%" if pd.notna(roic) else "N/A")
+            col5.metric("ROC Greenblatt (ca.)", f"{roc:.1f}%" if pd.notna(roc) else "N/A")
+            col6.metric("Mein Power Score", f"{power_score:.1f}" if power_score != 0 else "N/A")
+            
+            st.markdown("---")
+            
+            # --- HILFSFUNKTION FÜR MATRIZEN & CHARTS ---
+            def render_statement(title, df_annual, df_quarterly, key_prefix):
+                if df_annual is None or df_annual.empty or df_quarterly is None or df_quarterly.empty:
+                    st.warning(f"Keine Daten für {title} gefunden.")
+                    return
                 
-                # Top Kennzahlen (Statistiken als Quick-View)
-                info = data['info']
-                col1, col2, col3 = st.columns(3)
-                col1.metric("KGV", f"{info.get('trailingPE', 0):.1f}" if info.get('trailingPE') else "-")
-                col2.metric("KBV", f"{info.get('priceToBook', 0):.1f}" if info.get('priceToBook') else "-")
-                mcap = info.get('marketCap', 0) / 1_000_000_000
-                col3.metric("M.Cap", f"${mcap:.1f}B")
+                # 1. Filter: Jährlich oder Quartal
+                period = st.radio(f"Zeitraum für {title}:", ["Quartalsweise", "Jährlich"], horizontal=True, key=f"radio_{key_prefix}")
+                df = df_quarterly if period == "Quartalsweise" else df_annual
                 
-                st.markdown("---")
+                # Daten säubern (leere Zeilen weg, Spaltennamen als lesbares Datum formatieren)
+                df = df.dropna(how='all')
+                df.columns = [str(col).split(' ')[0] for col in df.columns]
                 
-                # Navigation für die Finanzberichte (Sub-Tabs)
-                st.markdown("### Finanzdaten & Details")
-                sub1, sub2, sub3, sub4, sub5 = st.tabs(["GuV", "Bilanz", "Cashflow", "Statistiken", "Insider"])
+                # 2. Selektierbare Zeilen für Grafik
+                st.write("**Interaktive Grafik (Balkendiagramm)**")
+                available_metrics = df.index.tolist()
                 
-                with sub1:
-                    st.write("**Income Statement (Quartale)**")
-                    if data['guv'] is not None and not data['guv'].empty:
-                        st.dataframe(data['guv'].dropna(how='all'))
-                    else:
-                        st.write("Keine GuV Daten gefunden.")
-                        
-                with sub2:
-                    st.write("**Balance Sheet (Quartale)**")
-                    if data['bilanz'] is not None and not data['bilanz'].empty:
-                        st.dataframe(data['bilanz'].dropna(how='all'))
-                    else:
-                        st.write("Keine Bilanz Daten gefunden.")
-                        
-                with sub3:
-                    st.write("**Cashflow Statement (Quartale)**")
-                    if data['cashflow'] is not None and not data['cashflow'].empty:
-                        st.dataframe(data['cashflow'].dropna(how='all'))
-                    else:
-                        st.write("Keine Cashflow Daten gefunden.")
-                        
-                with sub4:
-                    st.write("**Wichtige Verhältnisse & Margen**")
-                    stats_dict = {
-                        "Gross Margin": f"{info.get('grossMargins', 0)*100:.1f}%" if info.get('grossMargins') else "-",
-                        "Operating Margin": f"{info.get('operatingMargins', 0)*100:.1f}%" if info.get('operatingMargins') else "-",
-                        "Profit Margin": f"{info.get('profitMargins', 0)*100:.1f}%" if info.get('profitMargins') else "-",
-                        "Return on Equity (ROE)": f"{info.get('returnOnEquity', 0)*100:.1f}%" if info.get('returnOnEquity') else "-",
-                        "Return on Assets (ROA)": f"{info.get('returnOnAssets', 0)*100:.1f}%" if info.get('returnOnAssets') else "-",
-                        "Debt to Equity": info.get('debtToEquity', '-'),
-                        "Current Ratio": info.get('currentRatio', '-'),
-                        "Dividenden Rendite": f"{info.get('dividendYield', 0)*100:.2f}%" if info.get('dividendYield') else "-"
-                    }
-                    st.table(pd.DataFrame(list(stats_dict.items()), columns=["Kennzahl", "Wert"]))
+                # Standardmäßig die erste verfügbare Metrik anzeigen
+                default_sel = [available_metrics[0]] if available_metrics else []
+                
+                selected_metrics = st.multiselect(
+                    f"Wähle Zeilen aus der {title} für den Chart:", 
+                    available_metrics, 
+                    default=default_sel, 
+                    key=f"ms_{key_prefix}"
+                )
+                
+                if selected_metrics:
+                    # Für den Chart: Transponieren und sortieren (älteste links)
+                    chart_data = df.loc[selected_metrics].T.sort_index()
+                    st.bar_chart(chart_data)
+                
+                # 3. Die Matrix anzeigen
+                st.write("**Datenmatrix:**")
+                st.dataframe(df, use_container_width=True)
+
+            # --- SUB-TABS ---
+            sub1, sub2, sub3, sub4, sub5 = st.tabs(["GuV", "Bilanz", "Cashflow", "Statistiken", "Insider"])
+            
+            with sub1:
+                render_statement("GuV (Income Statement)", data['guv_a'], data['guv_q'], "guv")
                     
-                with sub5:
-                    st.write("**Aktionärsstruktur / Insider**")
-                    if data['insider'] is not None and not data['insider'].empty:
-                        # yfinance liefert hier oft eine Tabelle ohne Spaltennamen, wir machen sie hübsch
-                        insider_df = data['insider'].copy()
-                        if len(insider_df.columns) == 2:
-                            insider_df.columns = ["Anteil", "Kategorie"]
-                        st.dataframe(insider_df, hide_index=True)
-                    else:
-                        st.write("Keine Insider-Daten gefunden.")
-            else:
-                st.error("Fehler beim Laden. Ticker existiert möglicherweise nicht.")
+            with sub2:
+                render_statement("Bilanz (Balance Sheet)", data['bilanz_a'], data['bilanz_q'], "bilanz")
+                    
+            with sub3:
+                render_statement("Cashflow", data['cashflow_a'], data['cashflow_q'], "cf")
+                    
+            with sub4:
+                st.write("**Wichtige Verhältnisse**")
+                stats_dict = {
+                    "Brutto-Marge": f"{info.get('grossMargins', 0)*100:.1f}%",
+                    "Operative Marge": f"{info.get('operatingMargins', 0)*100:.1f}%",
+                    "Netto-Marge": f"{info.get('profitMargins', 0)*100:.1f}%",
+                    "Return on Equity (ROE)": f"{info.get('returnOnEquity', 0)*100:.1f}%",
+                    "Return on Assets (ROA)": f"{info.get('returnOnAssets', 0)*100:.1f}%",
+                    "Debt to Equity": info.get('debtToEquity', "N/A"),
+                    "Current Ratio": info.get('currentRatio', "N/A")
+                }
+                st.table(pd.DataFrame(list(stats_dict.items()), columns=["Kennzahl", "Wert"]))
+                
+            with sub5:
+                st.write("**Insider & Großaktionäre**")
+                if data['insider'] is not None and not data['insider'].empty:
+                    st.dataframe(data['insider'], use_container_width=True)
+                else:
+                    st.write("Keine Insider-Daten verfügbar.")
+        else:
+            st.error("Ticker nicht gefunden oder keine Daten verfügbar.")
 
 with tab2:
-    st.subheader("Globaler Multi-Faktor Screener")
-    st.write("Scannt automatisch eine vordefinierte Liste von globalen Top-Aktien.")
+    st.header("Globaler Screener")
+    st.write("Scannt automatisch eine globale Watchlist (Big Tech, DAX, Asien).")
     
-    # Lade Daten (wird gecached, dauert nur beim ersten Mal ein paar Sekunden)
-    with st.spinner('Scanne den Markt...'):
-        df_screener = run_screener_scan(GLOBAL_UNIVERSE)
-    
-    if not df_screener.empty:
-        # Extrahiere alle verfügbaren Länder für den Filter
-        available_countries = df_screener['Land'].unique().tolist()
+    with st.spinner("Lade Screener-Daten..."):
+        screener_df = load_screener_data()
         
-        st.markdown("**Filter-Kriterien:**")
-        selected_countries = st.multiselect("Länder auswählen:", available_countries, default=available_countries)
+    if not screener_df.empty:
+        # --- FILTER-BEREICH ---
+        st.subheader("Filter")
         
-        colA, colB = st.columns(2)
-        with colA:
-            max_kgv = st.slider("Max. KGV:", min_value=1, max_value=150, value=40)
-            max_kbv = st.slider("Max. KBV:", min_value=0.1, max_value=50.0, value=15.0)
-            min_mcap = st.number_input("Min. Market Cap ($B):", min_value=0.0, value=10.0, step=10.0)
-        with colB:
-            min_roic = st.slider("Min. ROIC (%):", min_value=-10, max_value=50, value=5)
-            min_roc = st.slider("Min. ROC (%):", min_value=-10, max_value=50, value=5)
+        # Länder-Filter (Multi-Select)
+        alle_laender = sorted(list(screener_df['Land'].unique()))
+        gewaehlte_laender = st.multiselect("Nach Land filtern:", alle_laender, default=alle_laender)
         
-        # Filtern
-        filtered_df = df_screener[
-            (df_screener['Land'].isin(selected_countries)) &
-            (df_screener['Market Cap'] >= min_mcap) &
-            (df_screener['KGV'] > 0) & (df_screener['KGV'] <= max_kgv) &
-            (df_screener['KBV'] > 0) & (df_screener['KBV'] <= max_kbv) &
-            (df_screener['ROIC %'] >= min_roic) &
-            (df_screener['ROC %'] >= min_roc)
-        ].sort_values(by="ROIC %", ascending=False)
+        # Schieberegler für Metriken
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            min_mcap = st.slider("Min. Marktkapitalisierung (Mrd $)", 0, 3000, 50)
+            max_kgv = st.slider("Maximales KGV", 0, 100, 50)
+        with col_f2:
+            min_marge = st.slider("Min. Operative Marge (%)", -20, 60, 10)
+            max_kbv = st.slider("Maximales KBV", 0, 50, 20)
+            
+        # Filter anwenden
+        mask = (
+            (screener_df['Land'].isin(gewaehlte_laender)) &
+            (screener_df['M.Cap (Mrd $)'] >= min_mcap) &
+            (screener_df['KGV'] <= max_kgv) &
+            (screener_df['KBV'] <= max_kbv) &
+            (screener_df['Marge (%)'] >= min_marge)
+        )
+        gefiltert = screener_df[mask].reset_index(drop=True)
         
-        st.success(f"{len(filtered_df)} Aktien entsprechen deinen Kriterien!")
+        # --- ERGEBNIS-TABELLE ---
+        st.write(f"**Treffer: {len(gefiltert)} Unternehmen**")
         
-        # Schön formatierte Ausgabe
-        st.dataframe(filtered_df.style.format({
-            "Market Cap": "{:.1f}B",
-            "KGV": "{:.1f}",
-            "KBV": "{:.1f}",
-            "ROIC %": "{:.1f}%",
-            "ROC %": "{:.1f}%"
-        }).background_gradient(subset=['ROIC %', 'ROC %'], cmap='Greens'), hide_index=True)
-    else:
-        st.warning("Fehler beim Scannen der Aktien.")
+        if len(gefiltert) > 0:
+            # Schöne farbige Tabelle
+            st.dataframe(
+                gefiltert.style.format({
+                    "M.Cap (Mrd $)": "{:.1f}",
+                    "KGV": "{:.1f}",
+                    "KBV": "{:.1f}",
+                    "Marge (%)": "{:.1f}%",
+                    "ROE (%)": "{:.1f}%",
+                    "Div. Rendite (%)": "{:.1f}%"
+                }).background_gradient(subset=['Marge (%)', 'ROE (%)'], cmap='Greens')
+            )
+        else:
+            st.warning("Keine Unternehmen entsprechen deinen Filterkriterien.")
