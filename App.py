@@ -24,7 +24,7 @@ def calculate_custom_indicators(ticker_symbol):
         # Transponieren, damit Datum als Zeile und Metriken als Spalten vorliegen
         df = q_financials.T
         
-        # Daten bereinigen
+        # Leere Felder (NaN) direkt zu 0 machen, um Berechnungsfehler zu vermeiden
         df = df.fillna(0)
         
         # Sicherstellen, dass die benötigten Spalten existieren
@@ -33,8 +33,11 @@ def calculate_custom_indicators(ticker_symbol):
             
             # --- MEINE EIGENEN INDIKATOREN (HIER WIRD PROGRAMMIERT) ---
             
-            # 1. Eigener Indikator: Operative Marge in %
-            df['Custom_Op_Margin_%'] = (df['Operating Income'] / df['Total Revenue']) * 100
+            # 1. Eigener Indikator: Operative Marge in % (Sicherung gegen Division durch 0)
+            # Wenn Revenue 0 ist (z.B. Fehler bei yfinance), setze Marge auf 0
+            df['Custom_Op_Margin_%'] = np.where(df['Total Revenue'] != 0, 
+                                              (df['Operating Income'] / df['Total Revenue']) * 100, 
+                                              0)
             
             # 2. Eigener Indikator: Quartals-Umsatzwachstum (QoQ)
             # Da die Daten absteigend sortiert sind, nutzen wir pct_change(-1)
@@ -42,6 +45,9 @@ def calculate_custom_indicators(ticker_symbol):
             
             # 3. Mein eigener "Score": Marge + Wachstum
             df['My_Power_Score'] = df['Custom_Op_Margin_%'] + df['Custom_Rev_Growth_QoQ_%']
+            
+            # Abschließend noch einmal alle neuen NaN-Werte (z.B. durch pct_change) zu 0 machen
+            df = df.fillna(0)
             
             return df[['Total Revenue', 'Operating Income', 'Custom_Op_Margin_%', 'Custom_Rev_Growth_QoQ_%', 'My_Power_Score']]
         else:
@@ -57,7 +63,7 @@ tab1, tab2 = st.tabs(["🔍 Einzel-Analyse", "🎯 Screener"])
 
 with tab1:
     st.subheader("Aktie analysieren")
-    ticker_input = st.text_input("Ticker-Symbol eingeben (z.B. AAPL, MSFT):", value="AAPL")
+    ticker_input = st.text_input("Ticker-Symbol eingeben (z.B. AAPL, ADBE):", value="AAPL")
     
     if st.button("Analysieren", use_container_width=True):
         with st.spinner('Lade Quartalszahlen...'):
@@ -78,14 +84,14 @@ with tab1:
                 # Zeige die Tabelle (auf dem Handy seitlich scrollbar)
                 st.dataframe(data.style.format("{:.2f}").background_gradient(subset=['My_Power_Score'], cmap='RdYlGn'))
             else:
-                st.error("Fehler beim Laden der Daten. Bitte Ticker prüfen.")
+                st.error("Fehler beim Laden der Daten oder keine passenden Kennzahlen bei yfinance gefunden. Bitte Ticker prüfen.")
 
 with tab2:
     st.subheader("Eigener Screener")
     st.write("Filtert Aktien basierend auf deinem Custom Score.")
     
     # Beispiel-Watchlist
-    watchlist = st.text_input("Ticker (kommagetrennt):", "AAPL, MSFT, GOOGL, META, INTC")
+    watchlist = st.text_input("Ticker (kommagetrennt):", "AAPL, MSFT, GOOGL, META, INTC, ADBE")
     min_score = st.slider("Mindest Power-Score:", min_value=-50, max_value=100, value=20)
     
     if st.button("Screener starten", use_container_width=True):
