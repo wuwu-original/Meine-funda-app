@@ -229,6 +229,64 @@ with tab1:
                     with chart_placeholder:
                         st.bar_chart(chart_data)
 
+            def calculate_historical_stats(guv, bilanz):
+                if guv is None or bilanz is None or guv.empty or bilanz.empty:
+                    return pd.DataFrame()
+                
+                # Gemeinsame Zeitpunkte (Spalten) zwischen GuV und Bilanz finden
+                common_cols = guv.columns.intersection(bilanz.columns)
+                if len(common_cols) == 0:
+                    return pd.DataFrame()
+                    
+                g = guv[common_cols]
+                b = bilanz[common_cols]
+                
+                # Leerer Rahmen für unsere berechneten Kennzahlen
+                stats = pd.DataFrame(index=[
+                    "Brutto-Marge (%)", 
+                    "Operative Marge (%)", 
+                    "Netto-Marge (%)", 
+                    "ROE (%)", 
+                    "ROA (%)", 
+                    "Debt to Equity", 
+                    "Current Ratio"
+                ], columns=common_cols)
+                
+                # Hilfsfunktion, um Zeilen sicher abzurufen (da Yahoo Finance manchmal Spalten umbenennt)
+                def get_val(df, keys):
+                    for k in keys:
+                        if k in df.index:
+                            return df.loc[k]
+                    return pd.Series(np.nan, index=df.columns)
+                
+                # Werte auslesen
+                revenue = get_val(g, ['Total Revenue', 'Operating Revenue', 'Revenue'])
+                gross_profit = get_val(g, ['Gross Profit'])
+                op_income = get_val(g, ['Operating Income', 'EBIT'])
+                net_income = get_val(g, ['Net Income', 'Net Income Common Stockholders'])
+                
+                equity = get_val(b, ['Stockholders Equity', 'Total Equity Gross Minority Interest', 'Common Stock Equity'])
+                assets = get_val(b, ['Total Assets'])
+                current_assets = get_val(b, ['Current Assets'])
+                current_liabilities = get_val(b, ['Current Liabilities'])
+                total_debt = get_val(b, ['Total Debt', 'Long Term Debt'])
+                
+                # Kennzahlen berechnen
+                stats.loc["Brutto-Marge (%)"] = (gross_profit / revenue) * 100
+                stats.loc["Operative Marge (%)"] = (op_income / revenue) * 100
+                stats.loc["Netto-Marge (%)"] = (net_income / revenue) * 100
+                stats.loc["ROE (%)"] = (net_income / equity) * 100
+                stats.loc["ROA (%)"] = (net_income / assets) * 100
+                stats.loc["Debt to Equity"] = total_debt / equity
+                stats.loc["Current Ratio"] = current_assets / current_liabilities
+                
+                # Unendliche Werte (z.B. durch Division durch Null) in NaN umwandeln
+                stats.replace([np.inf, -np.inf], np.nan, inplace=True)
+                
+                # Spalten formatieren (nur das Datum anzeigen)
+                stats.columns = [str(col).split(' ')[0] for col in stats.columns]
+                return stats.astype(float).round(2)
+
             # --- SUB-TABS ---
             sub1, sub2, sub3, sub4, sub5 = st.tabs(["GuV", "Bilanz", "Cashflow", "Statistiken", "Insider"])
             
@@ -242,17 +300,47 @@ with tab1:
                 render_statement("Cashflow", data['cashflow_a'], data['cashflow_q'], "cf")
                     
             with sub4:
-                st.write("**Wichtige Verhältnisse**")
-                stats_dict = {
-                    "Brutto-Marge": f"{info.get('grossMargins', 0)*100:.1f}%",
-                    "Operative Marge": f"{info.get('operatingMargins', 0)*100:.1f}%",
-                    "Netto-Marge": f"{info.get('profitMargins', 0)*100:.1f}%",
-                    "Return on Equity (ROE)": f"{info.get('returnOnEquity', 0)*100:.1f}%",
-                    "Return on Assets (ROA)": f"{info.get('returnOnAssets', 0)*100:.1f}%",
-                    "Debt to Equity": info.get('debtToEquity', "N/A"),
-                    "Current Ratio": info.get('currentRatio', "N/A")
-                }
-                st.table(pd.DataFrame(list(stats_dict.items()), columns=["Kennzahl", "Wert"]))
+                st.write("**Historische Verhältnisse (Margen, ROE, Verschuldung etc.)**")
+                
+                # 1. Filter: Jährlich oder Quartal
+                period_stats = st.radio("Zeitraum für Statistiken:", ["Quartalsweise", "Jährlich"], horizontal=True, key="radio_stats")
+                
+                # Daten entsprechend berechnen
+                if period_stats == "Quartalsweise":
+                    hist_stats = calculate_historical_stats(data['guv_q'], data['bilanz_q'])
+                else:
+                    hist_stats = calculate_historical_stats(data['guv_a'], data['bilanz_a'])
+                
+                if hist_stats is not None and not hist_stats.empty:
+                    chart_placeholder_stats = st.empty()
+                    
+                    st.write("**Datenmatrix (Klicke links auf die Zeilennummer, um die Historie als Liniendiagramm anzuzeigen):**")
+                    
+                    # 2. Interaktive Tabelle für die Statistiken anzeigen
+                    selection_event_stats = st.dataframe(
+                        hist_stats, 
+                        use_container_width=True,
+                        on_select="rerun",
+                        selection_mode="multi-row",
+                        key="df_select_stats"
+                    )
+                    
+                    # 3. Auswahl abfangen und Liniendiagramm zeichnen
+                    selected_rows_stats = selection_event_stats.selection.rows
+                    if selected_rows_stats:
+                        selected_metrics_stats = hist_stats.iloc[selected_rows_stats].index.tolist()
+                    else:
+                        # Standard: Die erste Kennzahl (Brutto-Marge) anzeigen
+                        available_metrics_stats = hist_stats.index.tolist()
+                        selected_metrics_stats = [available_metrics_stats[0]] if available_metrics_stats else []
+                        
+                    if selected_metrics_stats:
+                        # Transponieren, damit Datum auf X-Achse und Kennzahlen als Linien
+                        chart_data_stats = hist_stats.loc[selected_metrics_stats].T.sort_index()
+                        with chart_placeholder_stats:
+                            st.line_chart(chart_data_stats)
+                else:
+                    st.warning("Nicht genügend historische Daten vorhanden, um diese Statistiken zu berechnen.")
                 
             with sub5:
                 st.write("**Insider & Großaktionäre**")
