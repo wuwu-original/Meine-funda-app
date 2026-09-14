@@ -139,6 +139,22 @@ with tab1:
             st.markdown("---")
             
             # --- HILFSFUNKTION FÜR MATRIZEN & CHARTS ---
+            def format_large_number(x):
+                try:
+                    val = float(x)
+                    if pd.isna(val):
+                        return "N/A"
+                    if abs(val) >= 1e9:
+                        return f"{val / 1e9:.2f} B"
+                    elif abs(val) >= 1e6:
+                        return f"{val / 1e6:.2f} M"
+                    elif abs(val) >= 1e3:
+                        return f"{val / 1e3:.2f} K"
+                    else:
+                        return f"{val:.2f}"
+                except:
+                    return x
+
             def render_statement(title, df_annual, df_quarterly, key_prefix):
                 if df_annual is None or df_annual.empty or df_quarterly is None or df_quarterly.empty:
                     st.warning(f"Keine Daten für {title} gefunden.")
@@ -173,7 +189,13 @@ with tab1:
                 
                 # 3. Die Matrix anzeigen
                 st.write("**Datenmatrix:**")
-                st.dataframe(df, use_container_width=True)
+                
+                # Tabelle formatieren (Zahlen in Milliarden (B), Millionen (M) oder Tausend (K) umwandeln)
+                display_df = df.copy()
+                for col in display_df.columns:
+                    display_df[col] = display_df[col].apply(format_large_number)
+                    
+                st.dataframe(display_df, use_container_width=True)
 
             # --- SUB-TABS ---
             sub1, sub2, sub3, sub4, sub5 = st.tabs(["GuV", "Bilanz", "Cashflow", "Statistiken", "Insider"])
