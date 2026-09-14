@@ -3,8 +3,8 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import warnings
+import plotly.graph_objects as go
 
-# Warnungen unterdrücken, damit die App nicht mit roten Texten vollgemüllt wird
 warnings.filterwarnings('ignore')
 
 # Seiten-Konfiguration
@@ -101,7 +101,7 @@ def load_screener_data():
 
 
 # --- HAUPT-LAYOUT (TABS) ---
-tab1, tab2 = st.tabs(["🔍 Einzel-Analyse", "🎯 Screener"])
+tab1, tab2, tab3 = st.tabs(["🔍 Einzel-Analyse", "🎯 Screener", "📈 Kursverlauf"])
 
 with tab1:
     st.header("Aktie analysieren")
@@ -402,3 +402,49 @@ with tab2:
             )
         else:
             st.warning("Keine Unternehmen entsprechen deinen Filterkriterien.")
+
+with tab3:
+    st.header("Historischer Kursverlauf")
+    st.write("Wochenchart (Candlestick) der letzten 4 Jahre")
+    
+    # Eigenes Eingabefeld für den Chart-Tab (mit eindeutigem 'key', damit es nicht mit Tab 1 kollidiert)
+    ticker_input_chart = st.text_input("Ticker-Symbol eingeben (z.B. AAPL, MSFT):", key="chart_ticker").upper()
+    
+    if ticker_input_chart:
+        with st.spinner(f"Lade Kursdaten für {ticker_input_chart}..."):
+            try:
+                # Yahoo Finance API: 4 Jahre Historie (4y), Intervall wöchentlich (1wk)
+                df_chart = yf.download(ticker_input_chart, period="4y", interval="1wk")
+                
+                if not df_chart.empty:
+                    # Neuere yfinance Versionen geben manchmal verschachtelte Spalten (MultiIndex) zurück. 
+                    # Dies macht die Spalten sicher für unser Diagramm:
+                    if isinstance(df_chart.columns, pd.MultiIndex):
+                        df_chart.columns = df_chart.columns.droplevel(1)
+                        
+                    fig = go.Figure(data=[go.Candlestick(
+                        x=df_chart.index,
+                        open=df_chart['Open'],
+                        high=df_chart['High'],
+                        low=df_chart['Low'],
+                        close=df_chart['Close'],
+                        increasing_line_color='#26a69a', # Modernes Grün (bullish)
+                        decreasing_line_color='#ef5350'  # Modernes Rot (bearish)
+                    )])
+                    
+                    # Layout optimieren, speziell für die Lesbarkeit auf Smartphones
+                    fig.update_layout(
+                        xaxis_rangeslider_visible=False, # Range-Slider entfernen, nimmt auf Handys zu viel Platz weg
+                        margin=dict(l=10, r=10, t=30, b=10),
+                        height=500,
+                        yaxis_title="Preis",
+                        xaxis_title="Datum",
+                        template="plotly_white"
+                    )
+                    
+                    # Diagramm über die volle Bildschirmbreite ausgeben
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.error("Keine historischen Kursdaten gefunden.")
+            except Exception as e:
+                st.error("Fehler beim Abrufen der Kursdaten. Bitte überprüfe das Ticker-Symbol.")
