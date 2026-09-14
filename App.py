@@ -168,34 +168,66 @@ with tab1:
                 df = df.dropna(how='all')
                 df.columns = [str(col).split(' ')[0] for col in df.columns]
                 
-                # 2. Selektierbare Zeilen für Grafik
                 st.write("**Interaktive Grafik (Balkendiagramm)**")
-                available_metrics = df.index.tolist()
                 
-                # Standardmäßig die erste verfügbare Metrik anzeigen
-                default_sel = [available_metrics[0]] if available_metrics else []
+                # Platzhalter für den Chart erstellen (damit der Chart OBEN bleibt, 
+                # obwohl die Auswahl in der Tabelle UNTEN getroffen wird)
+                chart_placeholder = st.empty()
                 
-                selected_metrics = st.multiselect(
-                    f"Wähle Zeilen aus der {title} für den Chart:", 
-                    available_metrics, 
-                    default=default_sel, 
-                    key=f"ms_{key_prefix}"
-                )
+                st.write("**Datenmatrix (Klicke links auf die Zeilennummer, um die Zeile im Chart anzuzeigen):**")
                 
-                if selected_metrics:
-                    # Für den Chart: Transponieren und sortieren (älteste links)
-                    chart_data = df.loc[selected_metrics].T.sort_index()
-                    st.bar_chart(chart_data)
-                
-                # 3. Die Matrix anzeigen
-                st.write("**Datenmatrix:**")
-                
-                # Tabelle formatieren (Zahlen in Milliarden (B), Millionen (M) oder Tausend (K) umwandeln)
+                # Tabelle formatieren (Zahlen in B, M, K umwandeln)
                 display_df = df.copy()
                 for col in display_df.columns:
                     display_df[col] = display_df[col].apply(format_large_number)
                     
-                st.dataframe(display_df, use_container_width=True)
+                # 2. Interaktive Tabelle anzeigen (mit Auswahl-Funktion)
+                selection_event = st.dataframe(
+                    display_df, 
+                    use_container_width=True,
+                    on_select="rerun",           # Seite lädt bei Klick neu
+                    selection_mode="multi-row",  # Mehrere Zeilen auswählbar
+                    key=f"df_select_{key_prefix}"
+                )
+                
+                # 3. Herausfinden, welche Zeilen der Nutzer angeklickt hat
+                selected_rows = selection_event.selection.rows
+                
+                if selected_rows:
+                    # Wandle die angeklickten Zeilen-Nummern in die echten Namen um (z.B. "Total Revenue")
+                    selected_metrics = df.iloc[selected_rows].index.tolist()
+                else:
+                    # Wenn nichts ausgewählt ist, zeige standardmäßig die erste Zeile an
+                    available_metrics = df.index.tolist()
+                    selected_metrics = [available_metrics[0]] if available_metrics else []
+                
+                if selected_metrics:
+                    # Für den Chart: Original-Daten nutzen (wegen korrekter Skalierung), Transponieren und sortieren
+                    chart_data = df.loc[selected_metrics].T.sort_index()
+                    
+                    # Dynamische Skalierung für die Grafik
+                    max_val = chart_data.abs().max().max()
+                    
+                    if pd.notna(max_val):
+                        if max_val >= 1e9:
+                            chart_data = chart_data / 1e9
+                            suffix = " (in Mrd. / B)"
+                        elif max_val >= 1e6:
+                            chart_data = chart_data / 1e6
+                            suffix = " (in Mio. / M)"
+                        elif max_val >= 1e3:
+                            chart_data = chart_data / 1e3
+                            suffix = " (in Tsd. / K)"
+                        else:
+                            suffix = ""
+                        
+                        # Einheiten in die Legende der Grafik schreiben
+                        if suffix:
+                            chart_data.columns = [f"{col}{suffix}" for col in chart_data.columns]
+                            
+                    # Chart IN den vorbereiteten Platzhalter oben einfügen
+                    with chart_placeholder:
+                        st.bar_chart(chart_data)
 
             # --- SUB-TABS ---
             sub1, sub2, sub3, sub4, sub5 = st.tabs(["GuV", "Bilanz", "Cashflow", "Statistiken", "Insider"])
