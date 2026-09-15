@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import warnings
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots # NEU: Für die Sub-Charts
+from plotly.subplots import make_subplots
 
 warnings.filterwarnings('ignore')
 
@@ -13,13 +13,11 @@ st.set_page_config(page_title="Funda-App", page_icon="📊", layout="wide")
 
 st.title("📊 Funda-App")
 
-# --- HILFSFUNKTIONEN FÜR DATENABRUF ---
-@st.cache_data(ttl=3600)  # Speichert die Daten für 1 Stunde im Cache
+@st.cache_data(ttl=3600)  
 def load_stock_data(ticker_symbol):
     try:
         stock = yf.Ticker(ticker_symbol)
         
-        # Alle relevanten Berichte abrufen
         info = stock.info
         guv_a = stock.financials
         guv_q = stock.quarterly_financials
@@ -29,18 +27,14 @@ def load_stock_data(ticker_symbol):
         cf_q = stock.quarterly_cashflow
         insider = stock.major_holders
         
-        # Eigene Berechnungen (ROIC & ROC) - stark vereinfacht basierend auf verfügbaren yfinance Daten
         try:
-            ebit = info.get('ebitda', 0) # Fallback auf EBITDA, falls EBIT fehlt
+            ebit = info.get('ebitda', 0) 
             total_assets = info.get('totalAssets', bilanz_a.loc['Total Assets'].iloc[0] if 'Total Assets' in bilanz_a.index else 1)
             current_liabilities = bilanz_a.loc['Current Liabilities'].iloc[0] if 'Current Liabilities' in bilanz_a.index else 0
             net_working_capital = (bilanz_a.loc['Current Assets'].iloc[0] if 'Current Assets' in bilanz_a.index else 0) - current_liabilities
             fixed_assets = total_assets - (bilanz_a.loc['Current Assets'].iloc[0] if 'Current Assets' in bilanz_a.index else 0)
             
-            # Greenblatt ROC = EBIT / (Net Working Capital + Net Fixed Assets)
             roc = ebit / (net_working_capital + fixed_assets) if (net_working_capital + fixed_assets) > 0 else np.nan
-            
-            # ROIC = NOPAT / Invested Capital (Hier vereinfacht als EBIT / (Total Assets - Current Liabilities))
             invested_capital = total_assets - current_liabilities
             roic = ebit / invested_capital if invested_capital > 0 else np.nan
             
@@ -65,7 +59,6 @@ def load_stock_data(ticker_symbol):
 
 @st.cache_data(ttl=3600)
 def load_screener_data():
-    # Globale Watchlist (automatisch gescannt)
     tickers = [
         "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA", 
         "SAP", "SIE.DE", "ALV.DE", "VOW3.DE", "ASML", "LVMUY", 
@@ -78,8 +71,6 @@ def load_screener_data():
         try:
             stock = yf.Ticker(t)
             info = stock.info
-            
-            # Wenn MCap fehlt, überspringen
             if 'marketCap' not in info or info['marketCap'] is None:
                 continue
                 
@@ -100,8 +91,6 @@ def load_screener_data():
     df = pd.DataFrame(data_list)
     return df
 
-
-# --- HILFSFUNKTION FÜR INDIKATOREN ---
 def calc_sma(series, period):
     return series.rolling(window=period).mean()
 
@@ -113,10 +102,6 @@ def calc_rsi(series, period=14):
     return 100 - (100 / (1 + rs))
 
 def calc_rp2_indicator(df_chart, ticker_symbol):
-    """
-    Übersetzung des Pine Scripts RP2.
-    Korrigiert: Nutzt nun TTM (Trailing Twelve Months) für EPS und ROIC.
-    """
     data = load_stock_data(ticker_symbol)
     if not data or data['guv_q'] is None or data['bilanz_q'] is None:
         return pd.Series(np.nan, index=df_chart.index)
@@ -125,7 +110,6 @@ def calc_rp2_indicator(df_chart, ticker_symbol):
     bilanz_q = data['bilanz_q'].T
     info = data['info']
     
-    # Datum als Index sicherstellen und GANZ WICHTIG: chronologisch aufsteigend sortieren
     guv_q.index = pd.to_datetime(guv_q.index)
     bilanz_q.index = pd.to_datetime(bilanz_q.index)
     guv_q = guv_q.sort_index()
@@ -133,7 +117,6 @@ def calc_rp2_indicator(df_chart, ticker_symbol):
     
     fund = pd.DataFrame(index=guv_q.index)
     
-    # Sicheres Auslesen der Metriken
     def get_val(df, keys):
         for k in keys:
             if k in df.columns:
@@ -147,51 +130,36 @@ def calc_rp2_indicator(df_chart, ticker_symbol):
     if shares.isna().all():
         shares = info.get('sharesOutstanding', np.nan)
         
-    # TTM (Trailing Twelve Months) berechnen!
-    # yfinance liefert oft nur ca. 4-5 Quartale. Wir nehmen den Durchschnitt der vorhandenen
-    # Quartale (max 4) und multiplizieren mit 4 (Annualisierung), um den TTM-Wert stabil zu simulieren.
-    net_income_ttm = net_income_q.rolling(window=4, min_periods=1).mean() * 4
-    ebit_ttm = ebit_q.rolling(window=4, min_periods=1).mean() * 4
+    net_income_ttm = net_income_q.rolling(window=4, min_periods=1).sum() 
+    ebit_ttm = ebit_q.rolling(window=4, min_periods=1).sum() 
         
     fund['EPS_TTM'] = net_income_ttm / shares
-    
     fund['Equity'] = get_val(bilanz_q, ['Stockholders Equity', 'Total Equity Gross Minority Interest'])
     fund['Total Assets'] = get_val(bilanz_q, ['Total Assets'])
     fund['Current Liabilities'] = get_val(bilanz_q, ['Current Liabilities'])
     
     fund['BVPS'] = fund['Equity'] / shares
     fund['Invested_Capital'] = fund['Total Assets'] - fund['Current Liabilities']
-    fund['ROIC'] = ebit_ttm / fund['Invested_Capital'] # TTM ROIC
+    fund['ROIC'] = ebit_ttm / fund['Invested_Capital']
     
-    # Zusammenführen mit den wöchentlichen Kursdaten
     try:
         chart_idx = df_chart.index.tz_localize(None)
         fund.index = fund.index.tz_localize(None)
     except:
         chart_idx = df_chart.index
         
-    # Forward Fill: Füllt die Quartalswerte auf die wöchentlichen Tage auf
     fund_merged = fund.reindex(chart_idx.union(fund.index)).sort_index().ffill()
     fund_merged = fund_merged.reindex(chart_idx) 
     
-    # Formel: (math.sqrt(targetValue * eps * bookValuePerShare) * (roic / price)*100)-20
-    # Nutzt nun das korrekte TTM EPS (wie im Pine Script)
     target_value = 22.5
     inner_sqrt = target_value * fund_merged['EPS_TTM'] * fund_merged['BVPS']
-    
-    # Vermeide Fehler durch negative Wurzeln
     sqrt_val = np.where(inner_sqrt >= 0, np.sqrt(np.maximum(inner_sqrt, 0)), np.nan)
     
     rp2 = (sqrt_val * (fund_merged['ROIC'] / df_chart['Close']) * 100) - 20
     return rp2
 
 def calc_rp2_cf_indicator(df_chart, ticker_symbol):
-    """
-    Übersetzung des Pine Scripts RP2 CF.
-    Nutzt den operativen Cashflow (TTM) statt des Nettoeinkommens für die EPS-Variable.
-    """
     data = load_stock_data(ticker_symbol)
-    # Beachte: Wir benötigen nun auch cashflow_q
     if not data or data['cashflow_q'] is None or data['bilanz_q'] is None or data['guv_q'] is None:
         return pd.Series(np.nan, index=df_chart.index)
         
@@ -200,7 +168,6 @@ def calc_rp2_cf_indicator(df_chart, ticker_symbol):
     guv_q = data['guv_q'].T
     info = data['info']
     
-    # Datum als Index sicherstellen und GANZ WICHTIG: chronologisch aufsteigend sortieren
     cf_q.index = pd.to_datetime(cf_q.index)
     bilanz_q.index = pd.to_datetime(bilanz_q.index)
     guv_q.index = pd.to_datetime(guv_q.index)
@@ -211,14 +178,12 @@ def calc_rp2_cf_indicator(df_chart, ticker_symbol):
     
     fund = pd.DataFrame(index=cf_q.index)
     
-    # Sicheres Auslesen der Metriken
     def get_val(df, keys):
         for k in keys:
             if k in df.columns:
                 return df[k]
         return pd.Series(np.nan, index=df.index)
         
-    # Operativer Cashflow aus dem Cashflow-Statement
     ocf_q = get_val(cf_q, ['Operating Cash Flow', 'Total Cash From Operating Activities', 'Cash Flow From Continuing Operating Activities'])
     ebit_q = get_val(guv_q, ['EBIT', 'Operating Income'])
     shares = get_val(guv_q, ['Basic Average Shares', 'Ordinary Shares Number'])
@@ -226,47 +191,35 @@ def calc_rp2_cf_indicator(df_chart, ticker_symbol):
     if shares.isna().all():
         shares = info.get('sharesOutstanding', np.nan)
         
-    # TTM (Trailing Twelve Months) für Cashflow und EBIT
-    ocf_ttm = ocf_q.rolling(window=4, min_periods=1).mean() * 4
-    ebit_ttm = ebit_q.rolling(window=4, min_periods=1).mean() * 4
+    ocf_ttm = ocf_q.rolling(window=4, min_periods=1).sum() 
+    ebit_ttm = ebit_q.rolling(window=4, min_periods=1).sum() 
         
-    # Hier der große Unterschied: Cashflow pro Aktie (TTM)
     fund['CFPS_TTM'] = ocf_ttm / shares
-    
     fund['Equity'] = get_val(bilanz_q, ['Stockholders Equity', 'Total Equity Gross Minority Interest'])
     fund['Total Assets'] = get_val(bilanz_q, ['Total Assets'])
     fund['Current Liabilities'] = get_val(bilanz_q, ['Current Liabilities'])
     
     fund['BVPS'] = fund['Equity'] / shares
     fund['Invested_Capital'] = fund['Total Assets'] - fund['Current Liabilities']
-    fund['ROIC'] = ebit_ttm / fund['Invested_Capital'] # TTM ROIC
+    fund['ROIC'] = ebit_ttm / fund['Invested_Capital']
     
-    # Zusammenführen mit den wöchentlichen Kursdaten
     try:
         chart_idx = df_chart.index.tz_localize(None)
         fund.index = fund.index.tz_localize(None)
     except:
         chart_idx = df_chart.index
         
-    # Forward Fill: Füllt die Quartalswerte auf die wöchentlichen Tage auf
     fund_merged = fund.reindex(chart_idx.union(fund.index)).sort_index().ffill()
     fund_merged = fund_merged.reindex(chart_idx) 
     
-    # Formel mit CFPS_TTM statt EPS_TTM
     target_value = 22.5
     inner_sqrt = target_value * fund_merged['CFPS_TTM'] * fund_merged['BVPS']
-    
-    # Vermeide Fehler durch negative Wurzeln
     sqrt_val = np.where(inner_sqrt >= 0, np.sqrt(np.maximum(inner_sqrt, 0)), np.nan)
     
     rp2_cf = (sqrt_val * (fund_merged['ROIC'] / df_chart['Close']) * 100) - 20
     return rp2_cf
 
 def calc_rp2_pe_indicator(df_chart, ticker_symbol):
-    """
-    Übersetzung des Pine Scripts RP2 P E.
-    Berechnet das historische KGV (P/E), dessen SMA 300 und die 10% / 90% Perzentile als Kauf-/Verkaufszonen.
-    """
     data = load_stock_data(ticker_symbol)
     if not data or data['guv_q'] is None:
         return pd.DataFrame()
@@ -282,17 +235,15 @@ def calc_rp2_pe_indicator(df_chart, ticker_symbol):
                 return df[k]
         return pd.Series(np.nan, index=df.index)
 
-    # EPS TTM Berechnung (wie in den anderen Indikatoren)
     net_income_q = get_val(guv_q, ['Net Income', 'Net Income Common Stockholders'])
     shares = get_val(guv_q, ['Basic Average Shares', 'Ordinary Shares Number'])
 
     if shares.isna().all():
         shares = info.get('sharesOutstanding', np.nan)
 
-    net_income_ttm = net_income_q.rolling(window=4, min_periods=1).mean() * 4
+    net_income_ttm = net_income_q.rolling(window=4, min_periods=1).sum() 
     eps_ttm = net_income_ttm / shares
 
-    # Zusammenführen mit den wöchentlichen Kursdaten
     try:
         chart_idx = df_chart.index.tz_localize(None)
         eps_ttm.index = eps_ttm.index.tz_localize(None)
@@ -302,16 +253,11 @@ def calc_rp2_pe_indicator(df_chart, ticker_symbol):
     eps_merged = eps_ttm.reindex(chart_idx.union(eps_ttm.index)).sort_index().ffill()
     eps_merged = eps_merged.reindex(chart_idx)
 
-    # P/E nur berechnen, wenn EPS > 0 ist (wie im Pine Script)
     pe_vals = np.where(eps_merged > 0, df_chart['Close'] / eps_merged, np.nan)
     pe_series = pd.Series(pe_vals, index=df_chart.index)
 
-    # SMA 300 (Achtung: Benötigt 300 Wochen = ca. 6 Jahre Historie!)
     pe_sma = pe_series.rolling(window=300, min_periods=1).mean()
 
-    # Expanding Window für die 10% und 90% Perzentile
-    # Korrektur: Da yfinance oft nur Daten für ca. 1 Jahr (52 Wochen) hat, 
-    # senken wir min_periods von 100 auf 10, damit die roten Zonen gezeichnet werden.
     buy_line = pe_series.expanding(min_periods=10).quantile(0.1)
     sell_line = pe_series.expanding(min_periods=10).quantile(0.9)
 
@@ -322,7 +268,260 @@ def calc_rp2_pe_indicator(df_chart, ticker_symbol):
         'Sell': sell_line
     })
 
-# --- HAUPT-LAYOUT (TABS) ---
+def calc_rp2_intrinsic(df_chart, ticker_symbol, params):
+    """
+    Berechnet den RP2 Intrinsic Value & Konservative Vermögenssumme
+    basierend auf dynamischen Input-Parametern.
+    """
+    data = load_stock_data(ticker_symbol)
+    if not data or data['guv_q'] is None or data['bilanz_q'] is None:
+        return pd.DataFrame()
+        
+    guv_q = data['guv_q'].T
+    bilanz_q = data['bilanz_q'].T
+    info = data['info']
+    
+    guv_q.index = pd.to_datetime(guv_q.index)
+    bilanz_q.index = pd.to_datetime(bilanz_q.index)
+    guv_q = guv_q.sort_index()
+    bilanz_q = bilanz_q.sort_index()
+    
+    fund = pd.DataFrame(index=bilanz_q.index.union(guv_q.index)).sort_index()
+    
+    def get_val(df, keys):
+        for k in keys:
+            if k in df.columns:
+                return df[k]
+        return pd.Series(np.nan, index=df.index)
+        
+    # EPS (TTM)
+    net_income_q = get_val(guv_q, ['Net Income', 'Net Income Common Stockholders'])
+    shares_q = get_val(guv_q, ['Basic Average Shares', 'Ordinary Shares Number'])
+    if shares_q.isna().all():
+        shares_q = info.get('sharesOutstanding', np.nan)
+    net_income_ttm = net_income_q.rolling(window=4, min_periods=1).sum()
+    eps = net_income_ttm / shares_q
+    
+    # BVPS (FQ)
+    equity = get_val(bilanz_q, ['Stockholders Equity', 'Total Equity Gross Minority Interest'])
+    bvps = equity / shares_q
+    
+    # Goodwill & Intangibles
+    goodwill = get_val(bilanz_q, ['Goodwill', 'Goodwill And Other Intangible Assets'])
+    goodwill = goodwill.fillna(0)
+    intangibles = get_val(bilanz_q, ['Other Intangible Assets'])
+    intangibles = intangibles.fillna(0)
+    
+    # Tangible Book Value (TBVPS)
+    total_bv = equity
+    tangible_eq = total_bv - goodwill - intangibles
+    tbvps = tangible_eq / shares_q
+    
+    # Fallback to BVPS if TBVPS is NaN
+    final_bvps = tbvps.where(tbvps.notna(), bvps)
+    
+    # ROIC
+    ebit_q = get_val(guv_q, ['EBIT', 'Operating Income'])
+    ebit_ttm = ebit_q.rolling(window=4, min_periods=1).sum()
+    total_assets = get_val(bilanz_q, ['Total Assets'])
+    current_liabilities = get_val(bilanz_q, ['Current Liabilities'])
+    invested_capital = total_assets - current_liabilities
+    roic = ebit_ttm / invested_capital
+    
+    # Asset Valuation (Graham Style)
+    cash_sti = get_val(bilanz_q, ['Cash And Cash Equivalents', 'Cash Cash Equivalents And Short Term Investments', 'Total Cash'])
+    cash_sti = cash_sti.fillna(0)
+    
+    recv_net = get_val(bilanz_q, ['Net Receivables', 'Accounts Receivable'])
+    recv_net = recv_net.fillna(0)
+    
+    inv_val = get_val(bilanz_q, ['Inventory'])
+    inv_val = inv_val.fillna(0)
+    
+    ppe_net = get_val(bilanz_q, ['Net PPE', 'Properties'])
+    ppe_net = ppe_net.fillna(0)
+    
+    short_term_debt = get_val(bilanz_q, ['Current Debt', 'Short Long Term Debt'])
+    short_term_debt = short_term_debt.fillna(0)
+    
+    total_debt = get_val(bilanz_q, ['Total Debt'])
+    total_debt = total_debt.fillna(0)
+    
+    # Calculate asset sums based on params
+    weighted_sum = (params['w_cash'] * cash_sti) + (params['w_recv'] * recv_net) + (params['w_inv'] * inv_val) + (params['w_ppe'] * ppe_net) - short_term_debt
+    weighted_sumh = (params['w_cash'] * cash_sti) + (params['w_recvh'] * recv_net) + (params['w_invh'] * inv_val) + (params['w_ppeh'] * ppe_net) - short_term_debt
+    weighted_sumtot = (params['w_cash'] * cash_sti) + (params['w_recv'] * recv_net) + (params['w_inv'] * inv_val) + (params['w_ppe'] * ppe_net) - total_debt
+    
+    # Forward fill to daily/weekly chart dates
+    fund['EPS'] = eps
+    fund['Final_BVPS'] = final_bvps
+    fund['ROIC'] = roic
+    fund['Shares'] = shares_q
+    fund['Sum'] = weighted_sum
+    fund['Sum_H'] = weighted_sumh
+    fund['Sum_Tot'] = weighted_sumtot
+    
+    try:
+        chart_idx = df_chart.index.tz_localize(None)
+        fund.index = fund.index.tz_localize(None)
+    except:
+        chart_idx = df_chart.index
+        
+    fund_merged = fund.reindex(chart_idx.union(fund.index)).sort_index().ffill()
+    fund_merged = fund_merged.reindex(chart_idx) 
+    
+    # Final Math using Price
+    valid_eps = fund_merged['EPS'].where(fund_merged['EPS'] > 0, np.nan)
+    valid_bvps = fund_merged['Final_BVPS'].where(fund_merged['Final_BVPS'] > 0, np.nan)
+    valid_roic = fund_merged['ROIC'].where(fund_merged['ROIC'] > 0, np.nan)
+    
+    current_pe = df_chart['Close'] / valid_eps
+    
+    # sqrt(targetMultiplier * EPS * TBVPS * ROIC)
+    inner_val = params['targetMultiplier'] * valid_eps * valid_bvps * valid_roic
+    current_intrinsic = np.where(inner_val >= 0, np.sqrt(np.maximum(inner_val, 0)), np.nan)
+    
+    # Intrinsic Value with Growth and PE Normalization
+    intrinsic_value = current_intrinsic * (1.0 + params['expectedGrowth']) * (params['normalizedPE'] / current_pe)
+    
+    # Per Share Calculations
+    shares_arr = fund_merged['Shares']
+    if params['normalizePS']:
+        val_ps = np.where(shares_arr > 0, fund_merged['Sum'] / shares_arr, fund_merged['Sum'])
+        val_psh = np.where(shares_arr > 0, fund_merged['Sum_H'] / shares_arr, fund_merged['Sum_H'])
+        val_pstot = np.where(shares_arr > 0, fund_merged['Sum_Tot'] / shares_arr, fund_merged['Sum_Tot'])
+    else:
+        val_ps = fund_merged['Sum']
+        val_psh = fund_merged['Sum_H']
+        val_pstot = fund_merged['Sum_Tot']
+    
+    return pd.DataFrame({
+        'IntrinsicValue': intrinsic_value,
+        'CurrentIntrinsic': current_intrinsic,
+        'Val_PS': val_ps,
+        'Val_PSH': val_psh,
+        'Val_PSTOT': val_pstot
+    }, index=df_chart.index)
+
+def format_large_number(x):
+    try:
+        val = float(x)
+        if pd.isna(val):
+            return "N/A"
+        if abs(val) >= 1e9:
+            return f"{val / 1e9:.2f} B"
+        elif abs(val) >= 1e6:
+            return f"{val / 1e6:.2f} M"
+        elif abs(val) >= 1e3:
+            return f"{val / 1e3:.2f} K"
+        else:
+            return f"{val:.2f}"
+    except:
+        return x
+
+def calculate_historical_stats(guv, bilanz):
+    if guv is None or bilanz is None or guv.empty or bilanz.empty:
+        return pd.DataFrame()
+    
+    common_cols = guv.columns.intersection(bilanz.columns)
+    if len(common_cols) == 0:
+        return pd.DataFrame()
+        
+    g = guv[common_cols]
+    b = bilanz[common_cols]
+    
+    stats = pd.DataFrame(index=[
+        "Brutto-Marge (%)", "Operative Marge (%)", "Netto-Marge (%)", 
+        "ROE (%)", "ROA (%)", "Debt to Equity", "Current Ratio"
+    ], columns=common_cols)
+    
+    def get_val(df, keys):
+        for k in keys:
+            if k in df.index:
+                return df.loc[k]
+        return pd.Series(np.nan, index=df.columns)
+    
+    revenue = get_val(g, ['Total Revenue', 'Operating Revenue', 'Revenue'])
+    gross_profit = get_val(g, ['Gross Profit'])
+    op_income = get_val(g, ['Operating Income', 'EBIT'])
+    net_income = get_val(g, ['Net Income', 'Net Income Common Stockholders'])
+    
+    equity = get_val(b, ['Stockholders Equity', 'Total Equity Gross Minority Interest', 'Common Stock Equity'])
+    assets = get_val(b, ['Total Assets'])
+    current_assets = get_val(b, ['Current Assets'])
+    current_liabilities = get_val(b, ['Current Liabilities'])
+    total_debt = get_val(b, ['Total Debt', 'Long Term Debt'])
+    
+    stats.loc["Brutto-Marge (%)"] = (gross_profit / revenue) * 100
+    stats.loc["Operative Marge (%)"] = (op_income / revenue) * 100
+    stats.loc["Netto-Marge (%)"] = (net_income / revenue) * 100
+    stats.loc["ROE (%)"] = (net_income / equity) * 100
+    stats.loc["ROA (%)"] = (net_income / assets) * 100
+    stats.loc["Debt to Equity"] = total_debt / equity
+    stats.loc["Current Ratio"] = current_assets / current_liabilities
+    
+    stats.replace([np.inf, -np.inf], np.nan, inplace=True)
+    stats.columns = [str(col).split(' ')[0] for col in stats.columns]
+    return stats.astype(float).round(2)
+
+def render_statement(title, df_annual, df_quarterly, key_prefix):
+    if df_annual is None or df_annual.empty or df_quarterly is None or df_quarterly.empty:
+        st.warning(f"Keine Daten für {title} gefunden.")
+        return
+    
+    period = st.radio(f"Zeitraum für {title}:", ["Quartalsweise", "Jährlich"], horizontal=True, key=f"radio_{key_prefix}")
+    df = df_quarterly if period == "Quartalsweise" else df_annual
+    
+    df = df.dropna(how='all')
+    df.columns = [str(col).split(' ')[0] for col in df.columns]
+    
+    st.write("**Interaktive Grafik**")
+    chart_placeholder = st.empty()
+    
+    st.write("**Datenmatrix (Klicke links auf die Zeile für den Chart):**")
+    
+    display_df = df.copy()
+    for col in display_df.columns:
+        display_df[col] = display_df[col].apply(format_large_number)
+        
+    selection_event = st.dataframe(
+        display_df, 
+        use_container_width=True,
+        on_select="rerun",
+        selection_mode="multi-row",
+        key=f"df_select_{key_prefix}"
+    )
+    
+    selected_rows = selection_event.selection.rows
+    if selected_rows:
+        selected_metrics = df.iloc[selected_rows].index.tolist()
+    else:
+        available_metrics = df.index.tolist()
+        selected_metrics = [available_metrics[0]] if available_metrics else []
+    
+    if selected_metrics:
+        chart_data = df.loc[selected_metrics].T.sort_index()
+        max_val = chart_data.abs().max().max()
+        
+        if pd.notna(max_val):
+            if max_val >= 1e9:
+                chart_data = chart_data / 1e9
+                suffix = " (in Mrd. / B)"
+            elif max_val >= 1e6:
+                chart_data = chart_data / 1e6
+                suffix = " (in Mio. / M)"
+            elif max_val >= 1e3:
+                chart_data = chart_data / 1e3
+                suffix = " (in Tsd. / K)"
+            else:
+                suffix = ""
+            
+            if suffix:
+                chart_data.columns = [f"{col}{suffix}" for col in chart_data.columns]
+                
+        with chart_placeholder:
+            st.bar_chart(chart_data)
+
 tab1, tab2, tab3 = st.tabs(["🔍 Einzel-Analyse", "🎯 Screener", "📈 Kursverlauf"])
 
 with tab1:
@@ -336,7 +535,6 @@ with tab1:
             info = data['info']
             st.success(f"Daten für **{info.get('shortName', ticker_input)}** ({info.get('country', 'N/A')}) geladen!")
             
-            # --- TOP METRIKEN ---
             mcap = info.get('marketCap', 0) / 1e9
             kgv = info.get('trailingPE', np.nan)
             kbv = info.get('priceToBook', np.nan)
@@ -359,167 +557,27 @@ with tab1:
             
             st.markdown("---")
             
-            # --- HILFSFUNKTION FÜR MATRIZEN & CHARTS ---
-            def format_large_number(x):
-                try:
-                    val = float(x)
-                    if pd.isna(val):
-                        return "N/A"
-                    if abs(val) >= 1e9:
-                        return f"{val / 1e9:.2f} B"
-                    elif abs(val) >= 1e6:
-                        return f"{val / 1e6:.2f} M"
-                    elif abs(val) >= 1e3:
-                        return f"{val / 1e3:.2f} K"
-                    else:
-                        return f"{val:.2f}"
-                except:
-                    return x
-
-            def render_statement(title, df_annual, df_quarterly, key_prefix):
-                if df_annual is None or df_annual.empty or df_quarterly is None or df_quarterly.empty:
-                    st.warning(f"Keine Daten für {title} gefunden.")
-                    return
-                
-                period = st.radio(f"Zeitraum für {title}:", ["Quartalsweise", "Jährlich"], horizontal=True, key=f"radio_{key_prefix}")
-                df = df_quarterly if period == "Quartalsweise" else df_annual
-                
-                df = df.dropna(how='all')
-                df.columns = [str(col).split(' ')[0] for col in df.columns]
-                
-                st.write("**Interaktive Grafik (Balkendiagramm)**")
-                chart_placeholder = st.empty()
-                
-                st.write("**Datenmatrix (Klicke links auf die Zeilennummer, um die Zeile im Chart anzuzeigen):**")
-                
-                display_df = df.copy()
-                for col in display_df.columns:
-                    display_df[col] = display_df[col].apply(format_large_number)
-                    
-                selection_event = st.dataframe(
-                    display_df, 
-                    use_container_width=True,
-                    on_select="rerun",
-                    selection_mode="multi-row",
-                    key=f"df_select_{key_prefix}"
-                )
-                
-                selected_rows = selection_event.selection.rows
-                
-                if selected_rows:
-                    selected_metrics = df.iloc[selected_rows].index.tolist()
-                else:
-                    available_metrics = df.index.tolist()
-                    selected_metrics = [available_metrics[0]] if available_metrics else []
-                
-                if selected_metrics:
-                    chart_data = df.loc[selected_metrics].T.sort_index()
-                    max_val = chart_data.abs().max().max()
-                    
-                    if pd.notna(max_val):
-                        if max_val >= 1e9:
-                            chart_data = chart_data / 1e9
-                            suffix = " (in Mrd. / B)"
-                        elif max_val >= 1e6:
-                            chart_data = chart_data / 1e6
-                            suffix = " (in Mio. / M)"
-                        elif max_val >= 1e3:
-                            chart_data = chart_data / 1e3
-                            suffix = " (in Tsd. / K)"
-                        else:
-                            suffix = ""
-                        
-                        if suffix:
-                            chart_data.columns = [f"{col}{suffix}" for col in chart_data.columns]
-                            
-                    with chart_placeholder:
-                        st.bar_chart(chart_data)
-
-            def calculate_historical_stats(guv, bilanz):
-                if guv is None or bilanz is None or guv.empty or bilanz.empty:
-                    return pd.DataFrame()
-                
-                common_cols = guv.columns.intersection(bilanz.columns)
-                if len(common_cols) == 0:
-                    return pd.DataFrame()
-                    
-                g = guv[common_cols]
-                b = bilanz[common_cols]
-                
-                stats = pd.DataFrame(index=[
-                    "Brutto-Marge (%)", 
-                    "Operative Marge (%)", 
-                    "Netto-Marge (%)", 
-                    "ROE (%)", 
-                    "ROA (%)", 
-                    "Debt to Equity", 
-                    "Current Ratio"
-                ], columns=common_cols)
-                
-                def get_val(df, keys):
-                    for k in keys:
-                        if k in df.index:
-                            return df.loc[k]
-                    return pd.Series(np.nan, index=df.columns)
-                
-                revenue = get_val(g, ['Total Revenue', 'Operating Revenue', 'Revenue'])
-                gross_profit = get_val(g, ['Gross Profit'])
-                op_income = get_val(g, ['Operating Income', 'EBIT'])
-                net_income = get_val(g, ['Net Income', 'Net Income Common Stockholders'])
-                
-                equity = get_val(b, ['Stockholders Equity', 'Total Equity Gross Minority Interest', 'Common Stock Equity'])
-                assets = get_val(b, ['Total Assets'])
-                current_assets = get_val(b, ['Current Assets'])
-                current_liabilities = get_val(b, ['Current Liabilities'])
-                total_debt = get_val(b, ['Total Debt', 'Long Term Debt'])
-                
-                stats.loc["Brutto-Marge (%)"] = (gross_profit / revenue) * 100
-                stats.loc["Operative Marge (%)"] = (op_income / revenue) * 100
-                stats.loc["Netto-Marge (%)"] = (net_income / revenue) * 100
-                stats.loc["ROE (%)"] = (net_income / equity) * 100
-                stats.loc["ROA (%)"] = (net_income / assets) * 100
-                stats.loc["Debt to Equity"] = total_debt / equity
-                stats.loc["Current Ratio"] = current_assets / current_liabilities
-                
-                stats.replace([np.inf, -np.inf], np.nan, inplace=True)
-                stats.columns = [str(col).split(' ')[0] for col in stats.columns]
-                return stats.astype(float).round(2)
-
             sub1, sub2, sub3, sub4, sub5 = st.tabs(["GuV", "Bilanz", "Cashflow", "Statistiken", "Insider"])
             
-            with sub1:
-                render_statement("GuV (Income Statement)", data['guv_a'], data['guv_q'], "guv")
-            with sub2:
-                render_statement("Bilanz (Balance Sheet)", data['bilanz_a'], data['bilanz_q'], "bilanz")
-            with sub3:
-                render_statement("Cashflow", data['cashflow_a'], data['cashflow_q'], "cf")
+            with sub1: render_statement("GuV (Income Statement)", data['guv_a'], data['guv_q'], "guv")
+            with sub2: render_statement("Bilanz (Balance Sheet)", data['bilanz_a'], data['bilanz_q'], "bilanz")
+            with sub3: render_statement("Cashflow", data['cashflow_a'], data['cashflow_q'], "cf")
             with sub4:
                 st.write("**Historische Verhältnisse**")
                 period_stats = st.radio("Zeitraum für Statistiken:", ["Quartalsweise", "Jährlich"], horizontal=True, key="radio_stats")
                 
-                if period_stats == "Quartalsweise":
-                    hist_stats = calculate_historical_stats(data['guv_q'], data['bilanz_q'])
-                else:
-                    hist_stats = calculate_historical_stats(data['guv_a'], data['bilanz_a'])
+                hist_stats = calculate_historical_stats(data['guv_q'], data['bilanz_q']) if period_stats == "Quartalsweise" else calculate_historical_stats(data['guv_a'], data['bilanz_a'])
                 
                 if hist_stats is not None and not hist_stats.empty:
                     chart_placeholder_stats = st.empty()
-                    st.write("**Datenmatrix (Klicke links auf die Zeilennummer für Trend-Analyse):**")
+                    st.write("**Datenmatrix (Klicke links auf die Zeile für Trend-Analyse):**")
                     
                     selection_event_stats = st.dataframe(
-                        hist_stats, 
-                        use_container_width=True,
-                        on_select="rerun",
-                        selection_mode="multi-row",
-                        key="df_select_stats"
+                        hist_stats, use_container_width=True, on_select="rerun", selection_mode="multi-row", key="df_select_stats"
                     )
                     
                     selected_rows_stats = selection_event_stats.selection.rows
-                    if selected_rows_stats:
-                        selected_metrics_stats = hist_stats.iloc[selected_rows_stats].index.tolist()
-                    else:
-                        available_metrics_stats = hist_stats.index.tolist()
-                        selected_metrics_stats = [available_metrics_stats[0]] if available_metrics_stats else []
+                    selected_metrics_stats = hist_stats.iloc[selected_rows_stats].index.tolist() if selected_rows_stats else (hist_stats.index.tolist()[:1] if not hist_stats.empty else [])
                         
                     if selected_metrics_stats:
                         chart_data_stats = hist_stats.loc[selected_metrics_stats].T.sort_index()
@@ -528,7 +586,6 @@ with tab1:
                 else:
                     st.warning("Nicht genügend historische Daten vorhanden.")
             with sub5:
-                st.write("**Insider & Großaktionäre**")
                 if data['insider'] is not None and not data['insider'].empty:
                     st.dataframe(data['insider'], use_container_width=True)
                 else:
@@ -538,12 +595,10 @@ with tab1:
 
 with tab2:
     st.header("Globaler Screener")
-    
     with st.spinner("Lade Screener-Daten..."):
         screener_df = load_screener_data()
         
     if not screener_df.empty:
-        st.subheader("Filter")
         alle_laender = sorted(list(screener_df['Land'].unique()))
         gewaehlte_laender = st.multiselect("Nach Land filtern:", alle_laender, default=alle_laender)
         
@@ -565,18 +620,8 @@ with tab2:
         gefiltert = screener_df[mask].reset_index(drop=True)
         
         st.write(f"**Treffer: {len(gefiltert)} Unternehmen**")
-        
         if len(gefiltert) > 0:
-            st.dataframe(
-                gefiltert.style.format({
-                    "M.Cap (Mrd $)": "{:.1f}",
-                    "KGV": "{:.1f}",
-                    "KBV": "{:.1f}",
-                    "Marge (%)": "{:.1f}%",
-                    "ROE (%)": "{:.1f}%",
-                    "Div. Rendite (%)": "{:.1f}%"
-                }).background_gradient(subset=['Marge (%)', 'ROE (%)'], cmap='Greens')
-            )
+            st.dataframe(gefiltert.style.format({"M.Cap (Mrd $)": "{:.1f}", "KGV": "{:.1f}", "KBV": "{:.1f}", "Marge (%)": "{:.1f}%", "ROE (%)": "{:.1f}%", "Div. Rendite (%)": "{:.1f}%"}).background_gradient(subset=['Marge (%)', 'ROE (%)'], cmap='Greens'))
         else:
             st.warning("Keine Unternehmen entsprechen deinen Filterkriterien.")
 
@@ -587,106 +632,113 @@ with tab3:
     with col_c1:
         ticker_input_chart = st.text_input("Ticker-Symbol:", key="chart_ticker").upper()
     with col_c2:
-        overlay_ind = st.multiselect("Overlays (im Chart):", ["SMA 50", "SMA 200"])
+        overlay_ind = st.multiselect("Overlays (im Chart):", ["SMA 50", "SMA 200", "RP2 Intrinsic Value"])
     with col_c3:
         sub_ind = st.multiselect("Sub-Charts (max. 5):", ["RP2 Indikator (SinepTrader)", "RP2 CF Indikator (SinepTrader)", "RP2 P E (SinepTrader)", "RSI 14"], max_selections=5)
     
+    # Dynamischer Parameter-Bereich für Overlays, die Inputs benötigen
+    rp2iv_params = {}
+    if "RP2 Intrinsic Value" in overlay_ind:
+        st.markdown("### ⚙️ Parameter: RP2 Intrinsic Value")
+        with st.container():
+            col_p1, col_p2, col_p3 = st.columns(3)
+            rp2iv_params['targetMultiplier'] = col_p1.number_input("Bewertungs-Multiplikator", value=112.5, step=1.0)
+            rp2iv_params['expectedGrowth'] = col_p2.number_input("Erw. Gewinnwachstum nächste 12M (%)", value=0.0, step=1.0) / 100.0
+            rp2iv_params['normalizedPE'] = col_p3.number_input("Ziel/Normalisierter KGV", value=15.0, step=1.0)
+            
+            st.markdown("**Gewichtung der Vermögenswerte (Graham):**")
+            col_w1, col_w2, col_w3, col_w4 = st.columns(4)
+            rp2iv_params['w_cash'] = col_w1.number_input("Cash & STI", value=1.00, step=0.05)
+            rp2iv_params['w_recv'] = col_w2.number_input("Forderungen (netto)", value=0.75, step=0.05)
+            rp2iv_params['w_inv'] = col_w3.number_input("Vorräte", value=0.50, step=0.05)
+            rp2iv_params['w_ppe'] = col_w4.number_input("Sachanlagen (PPE)", value=0.01, step=0.05)
+            
+            st.markdown("**Alternative obere Gewichte:**")
+            col_w1h, col_w2h, col_w3h = st.columns(3)
+            rp2iv_params['w_recvh'] = col_w1h.number_input("Forderungen (H)", value=0.90, step=0.05)
+            rp2iv_params['w_invh'] = col_w2h.number_input("Vorräte (H)", value=0.75, step=0.05)
+            rp2iv_params['w_ppeh'] = col_w3h.number_input("Sachanlagen (H)", value=0.50, step=0.05)
+            
+            rp2iv_params['normalizePS'] = st.checkbox("Pro Aktie anzeigen (÷ Shares)", value=True)
+        st.markdown("---")
+        
     if ticker_input_chart:
         with st.spinner(f"Lade Kurs- und Fundamentaldaten für {ticker_input_chart}..."):
             try:
-                # Zeitraum von 4y auf 10y erhöht, da SMA 300 Wochen (~6 Jahre) Historie benötigt!
                 df_chart = yf.download(ticker_input_chart, period="10y", interval="1wk")
                 
                 if not df_chart.empty:
                     if isinstance(df_chart.columns, pd.MultiIndex):
                         df_chart.columns = df_chart.columns.droplevel(1)
                         
-                    # Dynamische Anzahl an Reihen berechnen
                     num_subcharts = len(sub_ind)
                     row_heights = [0.6] + [0.4 / num_subcharts] * num_subcharts if num_subcharts > 0 else [1.0]
                     
-                    fig = make_subplots(
-                        rows=num_subcharts + 1, 
-                        cols=1, 
-                        shared_xaxes=True,
-                        vertical_spacing=0.05,
-                        row_heights=row_heights
-                    )
+                    fig = make_subplots(rows=num_subcharts + 1, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=row_heights)
                     
-                    # 1. Haupt-Candlestick Chart hinzufügen
+                    # 1. Haupt-Candlestick Chart (Wir plotten ihn als Linie bzw. Basis für Schattierungen)
                     fig.add_trace(go.Candlestick(
                         x=df_chart.index, open=df_chart['Open'], high=df_chart['High'],
                         low=df_chart['Low'], close=df_chart['Close'], name="Kurs"
                     ), row=1, col=1)
                     
-                    # 2. Overlays hinzufügen
+                    # 2. Overlays
                     if "SMA 50" in overlay_ind:
                         fig.add_trace(go.Scatter(x=df_chart.index, y=calc_sma(df_chart['Close'], 50), line=dict(color='blue', width=1), name="SMA 50"), row=1, col=1)
                     if "SMA 200" in overlay_ind:
                         fig.add_trace(go.Scatter(x=df_chart.index, y=calc_sma(df_chart['Close'], 200), line=dict(color='orange', width=2), name="SMA 200"), row=1, col=1)
                         
-                    # 3. Sub-Charts iterativ hinzufügen
+                    if "RP2 Intrinsic Value" in overlay_ind:
+                        df_iv = calc_rp2_intrinsic(df_chart, ticker_input_chart, rp2iv_params)
+                        if not df_iv.empty:
+                            # Plotly Trick für die Margin of Safety Schattierung:
+                            # Wir nutzen zwei Scatter-Linien und füllen den Zwischenraum (Close vs Intrinsic Value)
+                            
+                            # Die blaue Haupt-Linie
+                            fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['IntrinsicValue'], line=dict(color='blue', width=2), name="Intrinsischer Wert"), row=1, col=1)
+                            
+                            # Die gelbe Linie ohne Wachstum
+                            fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['CurrentIntrinsic'], line=dict(color='gold', width=2), name="Intrinsisch (ohne Wachstum)"), row=1, col=1)
+                            
+                            # Die Graham Asset Summen
+                            fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['Val_PS'], line=dict(color='gray', width=2), name="Konservative Vermögenssumme"), row=1, col=1)
+                            fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['Val_PSH'], line=dict(color='darkgray', width=2), name="Obere Vermögenssumme"), row=1, col=1)
+                            fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['Val_PSTOT'], line=dict(color='lightblue', width=2), name="Summe mit allen Verb."), row=1, col=1)
+
+                    # 3. Sub-Charts
                     current_row = 2
-                    
                     for ind in sub_ind:
                         if ind == "RSI 14":
                             rsi_vals = calc_rsi(df_chart['Close'], 14)
                             fig.add_trace(go.Scatter(x=df_chart.index, y=rsi_vals, line=dict(color='purple', width=1.5), name="RSI 14"), row=current_row, col=1)
-                            # RSI Zonen
                             fig.add_hline(y=70, line_dash="dot", line_color="red", row=current_row, col=1)
                             fig.add_hline(y=30, line_dash="dot", line_color="green", row=current_row, col=1)
                             
                         elif ind == "RP2 Indikator (SinepTrader)":
                             rp2_vals = calc_rp2_indicator(df_chart, ticker_input_chart)
-                            
-                            # Farbe dynamisch: Grün wenn >= 0, sonst Rot (Als Bar-Chart besonders übersichtlich)
                             colors = ['#26a69a' if val >= 0 else '#ef5350' for val in rp2_vals]
-                            
-                            fig.add_trace(go.Bar(
-                                x=rp2_vals.index, 
-                                y=rp2_vals, 
-                                marker_color=colors, 
-                                name="RP2"
-                            ), row=current_row, col=1)
-                            
-                            # Nulllinie wie im Pine Script
+                            fig.add_trace(go.Bar(x=rp2_vals.index, y=rp2_vals, marker_color=colors, name="RP2"), row=current_row, col=1)
                             fig.add_hline(y=0, line_dash="dot", line_color="gray", row=current_row, col=1)
                             
                         elif ind == "RP2 CF Indikator (SinepTrader)":
                             rp2_cf_vals = calc_rp2_cf_indicator(df_chart, ticker_input_chart)
-                            
-                            # Farbe dynamisch: Grün wenn >= 0, sonst Rot
                             colors = ['#26a69a' if val >= 0 else '#ef5350' for val in rp2_cf_vals]
-                            
-                            fig.add_trace(go.Bar(
-                                x=rp2_cf_vals.index, 
-                                y=rp2_cf_vals, 
-                                marker_color=colors, 
-                                name="RP2 CF"
-                            ), row=current_row, col=1)
-                            
-                            # Nulllinie wie im Pine Script
+                            fig.add_trace(go.Bar(x=rp2_cf_vals.index, y=rp2_cf_vals, marker_color=colors, name="RP2 CF"), row=current_row, col=1)
                             fig.add_hline(y=0, line_dash="dot", line_color="gray", row=current_row, col=1)
                             
                         elif ind == "RP2 P E (SinepTrader)":
                             df_pe = calc_rp2_pe_indicator(df_chart, ticker_input_chart)
-                            
                             if not df_pe.empty:
-                                # Haupt-Linie Blau (KGV)
                                 fig.add_trace(go.Scatter(x=df_pe.index, y=df_pe['PE'], line=dict(color='blue', width=2), name="P/E"), row=current_row, col=1)
-                                # Durchschnitt Grau
                                 fig.add_trace(go.Scatter(x=df_pe.index, y=df_pe['Average'], line=dict(color='gray', width=1.5), name="SMA 300"), row=current_row, col=1)
-                                # Buy/Sell Zonen Rot
-                                fig.add_trace(go.Scatter(x=df_pe.index, y=df_pe['Buy'], line=dict(color='red', width=1, dash='dash'), name="Buy Zone (10%)"), row=current_row, col=1)
-                                fig.add_trace(go.Scatter(x=df_pe.index, y=df_pe['Sell'], line=dict(color='red', width=1, dash='dash'), name="Sell Zone (90%)"), row=current_row, col=1)
-
+                                fig.add_trace(go.Scatter(x=df_pe.index, y=df_pe['Buy'], line=dict(color='red', width=1, dash='dash'), name="Buy Zone"), row=current_row, col=1)
+                                fig.add_trace(go.Scatter(x=df_pe.index, y=df_pe['Sell'], line=dict(color='red', width=1, dash='dash'), name="Sell Zone"), row=current_row, col=1)
                         current_row += 1
 
-                    # Layout optimieren
                     fig.update_layout(
                         xaxis_rangeslider_visible=False,
                         margin=dict(l=10, r=10, t=30, b=10),
-                        height=500 + (num_subcharts * 150), # Chart wächst mit Subcharts
+                        height=500 + (num_subcharts * 150),
                         template="plotly_white",
                         showlegend=False
                     )
