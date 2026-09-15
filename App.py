@@ -309,9 +309,11 @@ def calc_rp2_pe_indicator(df_chart, ticker_symbol):
     # SMA 300 (Achtung: Benötigt 300 Wochen = ca. 6 Jahre Historie!)
     pe_sma = pe_series.rolling(window=300, min_periods=1).mean()
 
-    # Expanding Window für die 10% und 90% Perzentile ab 100 Wochen (wie array_push im Pine Script)
-    buy_line = pe_series.expanding(min_periods=100).quantile(0.1)
-    sell_line = pe_series.expanding(min_periods=100).quantile(0.9)
+    # Expanding Window für die 10% und 90% Perzentile
+    # Korrektur: Da yfinance oft nur Daten für ca. 1 Jahr (52 Wochen) hat, 
+    # senken wir min_periods von 100 auf 10, damit die roten Zonen gezeichnet werden.
+    buy_line = pe_series.expanding(min_periods=10).quantile(0.1)
+    sell_line = pe_series.expanding(min_periods=10).quantile(0.9)
 
     return pd.DataFrame({
         'PE': pe_series,
