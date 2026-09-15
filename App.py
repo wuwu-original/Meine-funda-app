@@ -546,38 +546,66 @@ def render_statement(title, df_annual, df_quarterly, key_prefix):
         st.warning(f"Keine Daten für {title} gefunden.")
         return
     
-    period = st.radio(f"Zeitraum für {title}:", ["Quartalsweise", "Jährlich"], horizontal=True, key=f"radio_{key_prefix}")
+    col1, col2 = st.columns(2)
+    with col1:
+        period = st.radio(f"Zeitraum für {title}:", ["Quartalsweise", "Jährlich"], horizontal=True, key=f"radio_{key_prefix}")
+    with col2:
+        detail = st.radio("Detailgrad:", ["Kompakt", "Alle Zeilen"], horizontal=True, key=f"detail_{key_prefix}")
+        
     df = df_quarterly if period == "Quartalsweise" else df_annual
     
     df = df.dropna(how='all')
     df.columns = [str(col).split(' ')[0] for col in df.columns]
+    
+    # Wichtige Top-Level-Kennzahlen für die kompakte Ansicht
+    main_metrics = [
+        'Total Revenue', 'Gross Profit', 'Operating Income', 'EBIT', 'Net Income', 'Net Income Common Stockholders',
+        'Total Assets', 'Current Assets', 'Total Liabilities', 'Total Liabilities Net Minority Interest', 'Current Liabilities',
+        'Stockholders Equity', 'Total Equity Gross Minority Interest', 'Total Debt', 'Net Debt', 
+        'Operating Cash Flow', 'Investing Cash Flow', 'Financing Cash Flow', 'Free Cash Flow', 'End Cash Position'
+    ]
+
+    display_df = df.copy()
+
+    if detail == "Kompakt":
+        # Nur die Zeilen behalten, die als Kernkennzahlen definiert sind
+        filtered_idx = []
+        for idx in display_df.index:
+            if any(m.lower() == str(idx).lower() for m in main_metrics):
+                filtered_idx.append(idx)
+        
+        # Falls die Tabelle nach dem Filtern leer wäre (z.B. bei Banken mit anderer GuV-Struktur), 
+        # zeigen wir sicherheitshalber wieder alle an.
+        if filtered_idx:
+            display_df = display_df.loc[filtered_idx]
     
     st.write("**Interaktive Grafik**")
     chart_placeholder = st.empty()
     
     st.write("**Datenmatrix (Klicke links auf die Zeile für den Chart):**")
     
-    display_df = df.copy()
-    for col in display_df.columns:
-        display_df[col] = display_df[col].apply(format_large_number)
+    view_df = display_df.copy()
+    for col in view_df.columns:
+        view_df[col] = view_df[col].apply(format_large_number)
         
+    # WICHTIG: Der Key muss sich ändern, wenn sich Filter ändern, sonst stürzt die Auswahl ab
     selection_event = st.dataframe(
-        display_df, 
+        view_df, 
         use_container_width=True,
         on_select="rerun",
         selection_mode="multi-row",
-        key=f"df_select_{key_prefix}"
+        key=f"df_select_{key_prefix}_{detail}_{period}"
     )
     
     selected_rows = selection_event.selection.rows
     if selected_rows:
-        selected_metrics = df.iloc[selected_rows].index.tolist()
+        selected_metrics = display_df.iloc[selected_rows].index.tolist()
     else:
-        available_metrics = df.index.tolist()
+        available_metrics = display_df.index.tolist()
         selected_metrics = [available_metrics[0]] if available_metrics else []
     
     if selected_metrics:
-        chart_data = df.loc[selected_metrics].T.sort_index()
+        chart_data = display_df.loc[selected_metrics].T.sort_index()
         max_val = chart_data.abs().max().max()
         
         if pd.notna(max_val):
