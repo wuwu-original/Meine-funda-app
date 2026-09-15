@@ -185,6 +185,83 @@ def calc_rp2_indicator(df_chart, ticker_symbol):
     rp2 = (sqrt_val * (fund_merged['ROIC'] / df_chart['Close']) * 100) - 20
     return rp2
 
+def calc_rp2_cf_indicator(df_chart, ticker_symbol):
+    """
+    Übersetzung des Pine Scripts RP2 CF.
+    Nutzt den operativen Cashflow (TTM) statt des Nettoeinkommens für die EPS-Variable.
+    """
+    data = load_stock_data(ticker_symbol)
+    # Beachte: Wir benötigen nun auch cashflow_q
+    if not data or data['cashflow_q'] is None or data['bilanz_q'] is None or data['guv_q'] is None:
+        return pd.Series(np.nan, index=df_chart.index)
+        
+    cf_q = data['cashflow_q'].T
+    bilanz_q = data['bilanz_q'].T
+    guv_q = data['guv_q'].T
+    info = data['info']
+    
+    # Datum als Index sicherstellen und GANZ WICHTIG: chronologisch aufsteigend sortieren
+    cf_q.index = pd.to_datetime(cf_q.index)
+    bilanz_q.index = pd.to_datetime(bilanz_q.index)
+    guv_q.index = pd.to_datetime(guv_q.index)
+    
+    cf_q = cf_q.sort_index()
+    bilanz_q = bilanz_q.sort_index()
+    guv_q = guv_q.sort_index()
+    
+    fund = pd.DataFrame(index=cf_q.index)
+    
+    # Sicheres Auslesen der Metriken
+    def get_val(df, keys):
+        for k in keys:
+            if k in df.columns:
+                return df[k]
+        return pd.Series(np.nan, index=df.index)
+        
+    # Operativer Cashflow aus dem Cashflow-Statement
+    ocf_q = get_val(cf_q, ['Operating Cash Flow', 'Total Cash From Operating Activities', 'Cash Flow From Continuing Operating Activities'])
+    ebit_q = get_val(guv_q, ['EBIT', 'Operating Income'])
+    shares = get_val(guv_q, ['Basic Average Shares', 'Ordinary Shares Number'])
+    
+    if shares.isna().all():
+        shares = info.get('sharesOutstanding', np.nan)
+        
+    # TTM (Trailing Twelve Months) für Cashflow und EBIT
+    ocf_ttm = ocf_q.rolling(window=4, min_periods=1).mean() * 4
+    ebit_ttm = ebit_q.rolling(window=4, min_periods=1).mean() * 4
+        
+    # Hier der große Unterschied: Cashflow pro Aktie (TTM)
+    fund['CFPS_TTM'] = ocf_ttm / shares
+    
+    fund['Equity'] = get_val(bilanz_q, ['Stockholders Equity', 'Total Equity Gross Minority Interest'])
+    fund['Total Assets'] = get_val(bilanz_q, ['Total Assets'])
+    fund['Current Liabilities'] = get_val(bilanz_q, ['Current Liabilities'])
+    
+    fund['BVPS'] = fund['Equity'] / shares
+    fund['Invested_Capital'] = fund['Total Assets'] - fund['Current Liabilities']
+    fund['ROIC'] = ebit_ttm / fund['Invested_Capital'] # TTM ROIC
+    
+    # Zusammenführen mit den wöchentlichen Kursdaten
+    try:
+        chart_idx = df_chart.index.tz_localize(None)
+        fund.index = fund.index.tz_localize(None)
+    except:
+        chart_idx = df_chart.index
+        
+    # Forward Fill: Füllt die Quartalswerte auf die wöchentlichen Tage auf
+    fund_merged = fund.reindex(chart_idx.union(fund.index)).sort_index().ffill()
+    fund_merged = fund_merged.reindex(chart_idx) 
+    
+    # Formel mit CFPS_TTM statt EPS_TTM
+    target_value = 22.5
+    inner_sqrt = target_value * fund_merged['CFPS_TTM'] * fund_merged['BVPS']
+    
+    # Vermeide Fehler durch negative Wurzeln
+    sqrt_val = np.where(inner_sqrt >= 0, np.sqrt(np.maximum(inner_sqrt, 0)), np.nan)
+    
+    rp2_cf = (sqrt_val * (fund_merged['ROIC'] / df_chart['Close']) * 100) - 20
+    return rp2_cf
+
 # --- HAUPT-LAYOUT (TABS) ---
 tab1, tab2, tab3 = st.tabs(["🔍 Einzel-Analyse", "🎯 Screener", "📈 Kursverlauf"])
 
@@ -452,7 +529,7 @@ with tab3:
     with col_c2:
         overlay_ind = st.multiselect("Overlays (im Chart):", ["SMA 50", "SMA 200"])
     with col_c3:
-        sub_ind = st.multiselect("Sub-Charts (max. 5):", ["RP2 Indikator (SinepTrader)", "RSI 14"], max_selections=5)
+        sub_ind = st.multiselect("Sub-Charts (max. 5):", ["RP2 Indikator (SinepTrader)", "RP2 CF Indikator (SinepTrader)", "RSI 14"], max_selections=5)
     
     if ticker_input_chart:
         with st.spinner(f"Lade Kurs- und Fundamentaldaten für {ticker_input_chart}..."):
@@ -509,6 +586,22 @@ with tab3:
                                 y=rp2_vals, 
                                 marker_color=colors, 
                                 name="RP2"
+                            ), row=current_row, col=1)
+                            
+                            # Nulllinie wie im Pine Script
+                            fig.add_hline(y=0, line_dash="dot", line_color="gray", row=current_row, col=1)
+                            
+                        elif ind == "RP2 CF Indikator (SinepTrader)":
+                            rp2_cf_vals = calc_rp2_cf_indicator(df_chart, ticker_input_chart)
+                            
+                            # Farbe dynamisch: Grün wenn >= 0, sonst Rot
+                            colors = ['#26a69a' if val >= 0 else '#ef5350' for val in rp2_cf_vals]
+                            
+                            fig.add_trace(go.Bar(
+                                x=rp2_cf_vals.index, 
+                                y=rp2_cf_vals, 
+                                marker_color=colors, 
+                                name="RP2 CF"
                             ), row=current_row, col=1)
                             
                             # Nulllinie wie im Pine Script
