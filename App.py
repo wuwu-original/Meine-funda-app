@@ -8,9 +8,7 @@ from plotly.subplots import make_subplots
 
 warnings.filterwarnings('ignore')
 
-# Seiten-Konfiguration
 st.set_page_config(page_title="Funda-App", page_icon="📊", layout="wide")
-
 st.title("📊 Funda-App")
 
 @st.cache_data(ttl=3600)  
@@ -130,6 +128,7 @@ def calc_rp2_indicator(df_chart, ticker_symbol):
     if shares.isna().all():
         shares = info.get('sharesOutstanding', np.nan)
         
+    # TTM (Trailing Twelve Months) berechnen wie im Pine Script
     net_income_ttm = net_income_q.rolling(window=4, min_periods=1).sum() 
     ebit_ttm = ebit_q.rolling(window=4, min_periods=1).sum() 
         
@@ -191,6 +190,7 @@ def calc_rp2_cf_indicator(df_chart, ticker_symbol):
     if shares.isna().all():
         shares = info.get('sharesOutstanding', np.nan)
         
+    # TTM (Trailing Twelve Months)
     ocf_ttm = ocf_q.rolling(window=4, min_periods=1).sum() 
     ebit_ttm = ebit_q.rolling(window=4, min_periods=1).sum() 
         
@@ -253,11 +253,13 @@ def calc_rp2_pe_indicator(df_chart, ticker_symbol):
     eps_merged = eps_ttm.reindex(chart_idx.union(eps_ttm.index)).sort_index().ffill()
     eps_merged = eps_merged.reindex(chart_idx)
 
+    # KGV (P/E)
     pe_vals = np.where(eps_merged > 0, df_chart['Close'] / eps_merged, np.nan)
     pe_series = pd.Series(pe_vals, index=df_chart.index)
 
     pe_sma = pe_series.rolling(window=300, min_periods=1).mean()
 
+    # Reduziert von 100 auf 10 für yfinance Historien-Toleranz
     buy_line = pe_series.expanding(min_periods=10).quantile(0.1)
     sell_line = pe_series.expanding(min_periods=10).quantile(0.9)
 
@@ -269,10 +271,6 @@ def calc_rp2_pe_indicator(df_chart, ticker_symbol):
     })
 
 def calc_rp2_intrinsic(df_chart, ticker_symbol, params):
-    """
-    Berechnet den RP2 Intrinsic Value & Konservative Vermögenssumme
-    basierend auf dynamischen Input-Parametern.
-    """
     data = load_stock_data(ticker_symbol)
     if not data or data['guv_q'] is None or data['bilanz_q'] is None:
         return pd.DataFrame()
@@ -294,7 +292,6 @@ def calc_rp2_intrinsic(df_chart, ticker_symbol, params):
                 return df[k]
         return pd.Series(np.nan, index=df.index)
         
-    # EPS (TTM)
     net_income_q = get_val(guv_q, ['Net Income', 'Net Income Common Stockholders'])
     shares_q = get_val(guv_q, ['Basic Average Shares', 'Ordinary Shares Number'])
     if shares_q.isna().all():
@@ -302,25 +299,16 @@ def calc_rp2_intrinsic(df_chart, ticker_symbol, params):
     net_income_ttm = net_income_q.rolling(window=4, min_periods=1).sum()
     eps = net_income_ttm / shares_q
     
-    # BVPS (FQ)
     equity = get_val(bilanz_q, ['Stockholders Equity', 'Total Equity Gross Minority Interest'])
     bvps = equity / shares_q
     
-    # Goodwill & Intangibles
-    goodwill = get_val(bilanz_q, ['Goodwill', 'Goodwill And Other Intangible Assets'])
-    goodwill = goodwill.fillna(0)
-    intangibles = get_val(bilanz_q, ['Other Intangible Assets'])
-    intangibles = intangibles.fillna(0)
+    goodwill = get_val(bilanz_q, ['Goodwill', 'Goodwill And Other Intangible Assets']).fillna(0)
+    intangibles = get_val(bilanz_q, ['Other Intangible Assets']).fillna(0)
     
-    # Tangible Book Value (TBVPS)
-    total_bv = equity
-    tangible_eq = total_bv - goodwill - intangibles
+    tangible_eq = equity - goodwill - intangibles
     tbvps = tangible_eq / shares_q
-    
-    # Fallback to BVPS if TBVPS is NaN
     final_bvps = tbvps.where(tbvps.notna(), bvps)
     
-    # ROIC
     ebit_q = get_val(guv_q, ['EBIT', 'Operating Income'])
     ebit_ttm = ebit_q.rolling(window=4, min_periods=1).sum()
     total_assets = get_val(bilanz_q, ['Total Assets'])
@@ -328,31 +316,17 @@ def calc_rp2_intrinsic(df_chart, ticker_symbol, params):
     invested_capital = total_assets - current_liabilities
     roic = ebit_ttm / invested_capital
     
-    # Asset Valuation (Graham Style)
-    cash_sti = get_val(bilanz_q, ['Cash And Cash Equivalents', 'Cash Cash Equivalents And Short Term Investments', 'Total Cash'])
-    cash_sti = cash_sti.fillna(0)
+    cash_sti = get_val(bilanz_q, ['Cash And Cash Equivalents', 'Cash Cash Equivalents And Short Term Investments', 'Total Cash']).fillna(0)
+    recv_net = get_val(bilanz_q, ['Net Receivables', 'Accounts Receivable']).fillna(0)
+    inv_val = get_val(bilanz_q, ['Inventory']).fillna(0)
+    ppe_net = get_val(bilanz_q, ['Net PPE', 'Properties']).fillna(0)
+    short_term_debt = get_val(bilanz_q, ['Current Debt', 'Short Long Term Debt']).fillna(0)
+    total_debt = get_val(bilanz_q, ['Total Debt']).fillna(0)
     
-    recv_net = get_val(bilanz_q, ['Net Receivables', 'Accounts Receivable'])
-    recv_net = recv_net.fillna(0)
-    
-    inv_val = get_val(bilanz_q, ['Inventory'])
-    inv_val = inv_val.fillna(0)
-    
-    ppe_net = get_val(bilanz_q, ['Net PPE', 'Properties'])
-    ppe_net = ppe_net.fillna(0)
-    
-    short_term_debt = get_val(bilanz_q, ['Current Debt', 'Short Long Term Debt'])
-    short_term_debt = short_term_debt.fillna(0)
-    
-    total_debt = get_val(bilanz_q, ['Total Debt'])
-    total_debt = total_debt.fillna(0)
-    
-    # Calculate asset sums based on params
     weighted_sum = (params['w_cash'] * cash_sti) + (params['w_recv'] * recv_net) + (params['w_inv'] * inv_val) + (params['w_ppe'] * ppe_net) - short_term_debt
     weighted_sumh = (params['w_cash'] * cash_sti) + (params['w_recvh'] * recv_net) + (params['w_invh'] * inv_val) + (params['w_ppeh'] * ppe_net) - short_term_debt
     weighted_sumtot = (params['w_cash'] * cash_sti) + (params['w_recv'] * recv_net) + (params['w_inv'] * inv_val) + (params['w_ppe'] * ppe_net) - total_debt
     
-    # Forward fill to daily/weekly chart dates
     fund['EPS'] = eps
     fund['Final_BVPS'] = final_bvps
     fund['ROIC'] = roic
@@ -370,21 +344,15 @@ def calc_rp2_intrinsic(df_chart, ticker_symbol, params):
     fund_merged = fund.reindex(chart_idx.union(fund.index)).sort_index().ffill()
     fund_merged = fund_merged.reindex(chart_idx) 
     
-    # Final Math using Price
     valid_eps = fund_merged['EPS'].where(fund_merged['EPS'] > 0, np.nan)
     valid_bvps = fund_merged['Final_BVPS'].where(fund_merged['Final_BVPS'] > 0, np.nan)
     valid_roic = fund_merged['ROIC'].where(fund_merged['ROIC'] > 0, np.nan)
     
     current_pe = df_chart['Close'] / valid_eps
-    
-    # sqrt(targetMultiplier * EPS * TBVPS * ROIC)
     inner_val = params['targetMultiplier'] * valid_eps * valid_bvps * valid_roic
     current_intrinsic = np.where(inner_val >= 0, np.sqrt(np.maximum(inner_val, 0)), np.nan)
-    
-    # Intrinsic Value with Growth and PE Normalization
     intrinsic_value = current_intrinsic * (1.0 + params['expectedGrowth']) * (params['normalizedPE'] / current_pe)
     
-    # Per Share Calculations
     shares_arr = fund_merged['Shares']
     if params['normalizePS']:
         val_ps = np.where(shares_arr > 0, fund_merged['Sum'] / shares_arr, fund_merged['Sum'])
@@ -401,6 +369,95 @@ def calc_rp2_intrinsic(df_chart, ticker_symbol, params):
         'Val_PS': val_ps,
         'Val_PSH': val_psh,
         'Val_PSTOT': val_pstot
+    }, index=df_chart.index)
+
+def calc_greenwald_valuation(df_chart, ticker_symbol, params):
+    data = load_stock_data(ticker_symbol)
+    if not data or data['guv_q'] is None or data['bilanz_q'] is None:
+        return pd.DataFrame()
+        
+    guv_q = data['guv_q'].T
+    bilanz_q = data['bilanz_q'].T
+    info = data['info']
+    
+    guv_q.index = pd.to_datetime(guv_q.index)
+    bilanz_q.index = pd.to_datetime(bilanz_q.index)
+    guv_q = guv_q.sort_index()
+    bilanz_q = bilanz_q.sort_index()
+    
+    fund = pd.DataFrame(index=bilanz_q.index.union(guv_q.index)).sort_index()
+    
+    def get_val(df, keys):
+        for k in keys:
+            if k in df.columns:
+                return df[k]
+        return pd.Series(np.nan, index=df.index)
+        
+    # Bilanz
+    cash = get_val(bilanz_q, ['Cash And Cash Equivalents', 'Total Cash']).fillna(0)
+    receivables = get_val(bilanz_q, ['Net Receivables', 'Accounts Receivable']).fillna(0)
+    inventory = get_val(bilanz_q, ['Inventory']).fillna(0)
+    ppe_net = get_val(bilanz_q, ['Net PPE', 'Properties']).fillna(0)
+    total_liabilities = get_val(bilanz_q, ['Total Liabilities']).fillna(0)
+    
+    shares_q = get_val(guv_q, ['Basic Average Shares', 'Ordinary Shares Number'])
+    if shares_q.isna().all():
+        shares_q = info.get('sharesOutstanding', np.nan)
+        
+    # GuV (Trailing Twelve Months)
+    rnd_q = get_val(guv_q, ['Research And Development']).fillna(0)
+    sga_q = get_val(guv_q, ['Selling General And Administration', 'Operating Expense']).fillna(0)
+    ebit_q = get_val(guv_q, ['EBIT', 'Operating Income']).fillna(0)
+    tax_q = get_val(guv_q, ['Tax Provision', 'Income Tax Expense']).fillna(0)
+    pretax_q = get_val(guv_q, ['Pretax Income']).fillna(0)
+    
+    rnd_ttm = rnd_q.rolling(window=4, min_periods=1).sum().abs()
+    sga_ttm = sga_q.rolling(window=4, min_periods=1).sum().abs()
+    ebit_ttm = ebit_q.rolling(window=4, min_periods=1).sum()
+    tax_ttm = tax_q.rolling(window=4, min_periods=1).sum().abs()
+    pretax_ttm = pretax_q.rolling(window=4, min_periods=1).sum()
+    
+    # 1. Asset Value (Reproduktion)
+    adj_cash = cash * params['cash_factor']
+    adj_recv = receivables * params['recv_factor']
+    adj_inv = inventory * params['inv_factor']
+    adj_ppe = ppe_net * params['ppe_factor']
+    
+    add_rnd = (rnd_ttm * params['rnd_years']) if params['use_intangibles'] else 0
+    add_sga = (sga_ttm * params['sga_years']) if params['use_intangibles'] else 0
+    
+    total_reproduction_assets = adj_cash + adj_recv + adj_inv + adj_ppe + add_rnd + add_sga
+    av_total = total_reproduction_assets - total_liabilities
+    av_per_share = np.where(shares_q > 0, av_total / shares_q, np.nan)
+    
+    # 2. Earnings Power Value (EPV)
+    eff_tax_rate = np.where(pretax_ttm != 0, tax_ttm / pretax_ttm, 0.25)
+    final_tax_rate = np.clip(eff_tax_rate, 0.0, 0.40) # Begrenzung 0% - 40%
+    
+    nopat = ebit_ttm * (1 - final_tax_rate)
+    epv_total = nopat / params['wacc']
+    epv_per_share = np.where(shares_q > 0, epv_total / shares_q, np.nan)
+    
+    fund['AV_PS'] = av_per_share
+    fund['EPV_PS'] = epv_per_share
+    
+    try:
+        chart_idx = df_chart.index.tz_localize(None)
+        fund.index = fund.index.tz_localize(None)
+    except:
+        chart_idx = df_chart.index
+        
+    fund_merged = fund.reindex(chart_idx.union(fund.index)).sort_index().ffill()
+    fund_merged = fund_merged.reindex(chart_idx) 
+    
+    buy_price = fund_merged['EPV_PS'] * (1 - params['margin_safety'])
+    franchise_value = (fund_merged['EPV_PS'] / fund_merged['AV_PS']) - 1
+    
+    return pd.DataFrame({
+        'AV_PS': fund_merged['AV_PS'],
+        'EPV_PS': fund_merged['EPV_PS'],
+        'Buy_Price': buy_price,
+        'Franchise_Value': franchise_value
     }, index=df_chart.index)
 
 def format_large_number(x):
@@ -632,31 +689,30 @@ with tab3:
     with col_c1:
         ticker_input_chart = st.text_input("Ticker-Symbol:", key="chart_ticker").upper()
     with col_c2:
-        overlay_ind = st.multiselect("Overlays (im Chart):", ["SMA 50", "SMA 200", "RP2 Intrinsic Value", "Liquiditätswert pro Aktie"])
+        overlay_ind = st.multiselect("Overlays (im Chart):", ["SMA 50", "SMA 200", "RP2 Intrinsic Value", "Liquiditätswert pro Aktie", "Greenwald Valuation"])
     with col_c3:
         sub_ind = st.multiselect("Sub-Charts (max. 5):", ["RP2 Indikator (SinepTrader)", "RP2 CF Indikator (SinepTrader)", "RP2 P E (SinepTrader)", "RSI 14"], max_selections=5)
     
-    # Dynamischer Parameter-Bereich für Overlays
-    # Wir setzen Standardwerte für alles, falls ein Menüpunkt nicht ausgewählt ist
     rp2iv_params = {
         'targetMultiplier': 112.5, 'expectedGrowth': 0.0, 'normalizedPE': 15.0,
         'w_cash': 1.0, 'w_recv': 0.75, 'w_inv': 0.50, 'w_ppe': 0.01,
         'w_recvh': 0.90, 'w_invh': 0.75, 'w_ppeh': 0.50, 'normalizePS': True
     }
     
-    needs_params = "RP2 Intrinsic Value" in overlay_ind or "Liquiditätswert pro Aktie" in overlay_ind
+    greenwald_params = {}
+    
+    needs_params = "RP2 Intrinsic Value" in overlay_ind or "Liquiditätswert pro Aktie" in overlay_ind or "Greenwald Valuation" in overlay_ind
     
     if needs_params:
         st.markdown("### ⚙️ Parameter-Einstellungen")
         with st.container():
-            # Zeige nur die Parameter an, deren Indikator auch ausgewählt wurde
             if "RP2 Intrinsic Value" in overlay_ind:
                 st.markdown("**RP2 Intrinsic Value:**")
                 col_p1, col_p2, col_p3 = st.columns(3)
                 rp2iv_params['targetMultiplier'] = col_p1.number_input("Bewertungs-Multiplikator", value=112.5, step=1.0)
                 rp2iv_params['expectedGrowth'] = col_p2.number_input("Erw. Gewinnwachstum (nächste 12M)", value=0.0, step=0.01)
                 rp2iv_params['normalizedPE'] = col_p3.number_input("Ziel KGV", value=15.0, step=1.0)
-                st.write("") # Kleiner Abstand
+                st.write("") 
                 
             if "Liquiditätswert pro Aktie" in overlay_ind:
                 st.markdown("**Gewichtung der Vermögenswerte (Liquiditätswert):**")
@@ -673,11 +729,34 @@ with tab3:
                 rp2iv_params['w_ppeh'] = col_w3h.number_input("Sachanlagen (H)", value=0.50, step=0.05)
                 
                 rp2iv_params['normalizePS'] = st.checkbox("Pro Aktie anzeigen (÷ Shares)", value=True)
+                st.write("")
+                
+            if "Greenwald Valuation" in overlay_ind:
+                st.markdown("**Greenwald Valuation: Deep Dive Analysis:**")
+                st.caption("1. Materielle Assets anpassen")
+                g1, g2, g3, g4 = st.columns(4)
+                greenwald_params['cash_factor'] = g1.number_input("Cash Faktor", value=1.0, min_value=0.9, max_value=1.0, step=0.01)
+                greenwald_params['recv_factor'] = g2.number_input("Forderungen Faktor", value=0.98, min_value=0.5, step=0.01)
+                greenwald_params['inv_factor'] = g3.number_input("Vorräte Faktor", value=1.0, min_value=0.5, max_value=2.0, step=0.05)
+                greenwald_params['ppe_factor'] = g4.number_input("PP&E Faktor", value=1.2, min_value=0.5, max_value=5.0, step=0.1)
+                
+                st.caption("2. Immaterielle Reproduktionskosten")
+                g5, g6, g7 = st.columns(3)
+                greenwald_params['use_intangibles'] = g5.checkbox("R&D und SG&A addieren?", value=True)
+                greenwald_params['rnd_years'] = g6.number_input("Jahre an R&D addieren", value=2.0, min_value=0.0, step=0.5)
+                greenwald_params['sga_years'] = g7.number_input("Jahre an SG&A addieren", value=1.0, min_value=0.0, step=0.5)
+                
+                st.caption("3. Bewertung & WACC")
+                g8, g9 = st.columns(2)
+                greenwald_params['wacc'] = g8.number_input("WACC (Kapitalkosten)", value=0.10, step=0.005)
+                greenwald_params['margin_safety'] = g9.number_input("Sicherheitsmarge (MoS)", value=0.33, step=0.05)
+                
         st.markdown("---")
         
     if ticker_input_chart:
         with st.spinner(f"Lade Kurs- und Fundamentaldaten für {ticker_input_chart}..."):
             try:
+                # 10 Jahre Historie wegen dem P/E Array-Speicher
                 df_chart = yf.download(ticker_input_chart, period="10y", interval="1wk")
                 
                 if not df_chart.empty:
@@ -689,20 +768,18 @@ with tab3:
                     
                     fig = make_subplots(rows=num_subcharts + 1, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=row_heights)
                     
-                    # 1. Haupt-Candlestick Chart 
+                    # Haupt-Chart
                     fig.add_trace(go.Candlestick(
                         x=df_chart.index, open=df_chart['Open'], high=df_chart['High'],
                         low=df_chart['Low'], close=df_chart['Close'], name="Kurs"
                     ), row=1, col=1)
                     
-                    # 2. Overlays
                     if "SMA 50" in overlay_ind:
                         fig.add_trace(go.Scatter(x=df_chart.index, y=calc_sma(df_chart['Close'], 50), line=dict(color='blue', width=1), name="SMA 50"), row=1, col=1)
                     if "SMA 200" in overlay_ind:
                         fig.add_trace(go.Scatter(x=df_chart.index, y=calc_sma(df_chart['Close'], 200), line=dict(color='orange', width=2), name="SMA 200"), row=1, col=1)
                         
-                    if needs_params:
-                        # Wir berechnen die Daten nur einmal, nutzen sie aber für beide Indikatoren
+                    if "RP2 Intrinsic Value" in overlay_ind or "Liquiditätswert pro Aktie" in overlay_ind:
                         df_iv = calc_rp2_intrinsic(df_chart, ticker_input_chart, rp2iv_params)
                         if not df_iv.empty:
                             if "RP2 Intrinsic Value" in overlay_ind:
@@ -713,8 +790,27 @@ with tab3:
                                 fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['Val_PS'], line=dict(color='gray', width=2), name="Konservative Vermögenssumme"), row=1, col=1)
                                 fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['Val_PSH'], line=dict(color='darkgray', width=2), name="Obere Vermögenssumme"), row=1, col=1)
                                 fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['Val_PSTOT'], line=dict(color='lightblue', width=2), name="Summe mit allen Verb."), row=1, col=1)
+                    
+                    if "Greenwald Valuation" in overlay_ind:
+                        df_gw = calc_greenwald_valuation(df_chart, ticker_input_chart, greenwald_params)
+                        if not df_gw.empty:
+                            fig.add_trace(go.Scatter(x=df_gw.index, y=df_gw['EPV_PS'], line=dict(color='green', width=2), name="EPV (Ertragskraft)"), row=1, col=1)
+                            fig.add_trace(go.Scatter(x=df_gw.index, y=df_gw['AV_PS'], line=dict(color='orange', width=2), name="AV (Reproduktion)"), row=1, col=1)
+                            fig.add_trace(go.Scatter(x=df_gw.index, y=df_gw['Buy_Price'], mode='markers', marker=dict(color='blue', size=4), name="Kaufpreis (MoS)"), row=1, col=1)
+                            
+                            # Die Pine Script Tabelle als Streamlit Metriken über dem Chart anzeigen
+                            latest_av = df_gw['AV_PS'].dropna().iloc[-1] if not df_gw['AV_PS'].dropna().empty else 0
+                            latest_epv = df_gw['EPV_PS'].dropna().iloc[-1] if not df_gw['EPV_PS'].dropna().empty else 0
+                            latest_franchise = df_gw['Franchise_Value'].dropna().iloc[-1] if not df_gw['Franchise_Value'].dropna().empty else 0
+                            
+                            st.markdown("**Greenwald Live-Bewertung (Aktuellstes Quartal):**")
+                            mc1, mc2, mc3 = st.columns(3)
+                            mc1.metric("AV (Reproduktion) / Aktie", f"${latest_av:.2f}")
+                            mc2.metric("EPV (Ertragskraft) / Aktie", f"${latest_epv:.2f}")
+                            mc3.metric("Franchise Value (Moat)", f"{latest_franchise * 100:.1f}%", 
+                                       delta="Moat Vorhanden" if latest_franchise > 0 else "Kein Moat (Kapitalvernichter)",
+                                       delta_color="normal" if latest_franchise > 0 else "inverse")
 
-                    # 3. Sub-Charts
                     current_row = 2
                     for ind in sub_ind:
                         if ind == "RSI 14":
