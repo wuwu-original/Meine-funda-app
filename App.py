@@ -262,6 +262,64 @@ def calc_rp2_cf_indicator(df_chart, ticker_symbol):
     rp2_cf = (sqrt_val * (fund_merged['ROIC'] / df_chart['Close']) * 100) - 20
     return rp2_cf
 
+def calc_rp2_pe_indicator(df_chart, ticker_symbol):
+    """
+    Übersetzung des Pine Scripts RP2 P E.
+    Berechnet das historische KGV (P/E), dessen SMA 300 und die 10% / 90% Perzentile als Kauf-/Verkaufszonen.
+    """
+    data = load_stock_data(ticker_symbol)
+    if not data or data['guv_q'] is None:
+        return pd.DataFrame()
+
+    guv_q = data['guv_q'].T
+    guv_q.index = pd.to_datetime(guv_q.index)
+    guv_q = guv_q.sort_index()
+    info = data['info']
+
+    def get_val(df, keys):
+        for k in keys:
+            if k in df.columns:
+                return df[k]
+        return pd.Series(np.nan, index=df.index)
+
+    # EPS TTM Berechnung (wie in den anderen Indikatoren)
+    net_income_q = get_val(guv_q, ['Net Income', 'Net Income Common Stockholders'])
+    shares = get_val(guv_q, ['Basic Average Shares', 'Ordinary Shares Number'])
+
+    if shares.isna().all():
+        shares = info.get('sharesOutstanding', np.nan)
+
+    net_income_ttm = net_income_q.rolling(window=4, min_periods=1).mean() * 4
+    eps_ttm = net_income_ttm / shares
+
+    # Zusammenführen mit den wöchentlichen Kursdaten
+    try:
+        chart_idx = df_chart.index.tz_localize(None)
+        eps_ttm.index = eps_ttm.index.tz_localize(None)
+    except:
+        chart_idx = df_chart.index
+
+    eps_merged = eps_ttm.reindex(chart_idx.union(eps_ttm.index)).sort_index().ffill()
+    eps_merged = eps_merged.reindex(chart_idx)
+
+    # P/E nur berechnen, wenn EPS > 0 ist (wie im Pine Script)
+    pe_vals = np.where(eps_merged > 0, df_chart['Close'] / eps_merged, np.nan)
+    pe_series = pd.Series(pe_vals, index=df_chart.index)
+
+    # SMA 300 (Achtung: Benötigt 300 Wochen = ca. 6 Jahre Historie!)
+    pe_sma = pe_series.rolling(window=300, min_periods=1).mean()
+
+    # Expanding Window für die 10% und 90% Perzentile ab 100 Wochen (wie array_push im Pine Script)
+    buy_line = pe_series.expanding(min_periods=100).quantile(0.1)
+    sell_line = pe_series.expanding(min_periods=100).quantile(0.9)
+
+    return pd.DataFrame({
+        'PE': pe_series,
+        'Average': pe_sma,
+        'Buy': buy_line,
+        'Sell': sell_line
+    })
+
 # --- HAUPT-LAYOUT (TABS) ---
 tab1, tab2, tab3 = st.tabs(["🔍 Einzel-Analyse", "🎯 Screener", "📈 Kursverlauf"])
 
@@ -529,12 +587,13 @@ with tab3:
     with col_c2:
         overlay_ind = st.multiselect("Overlays (im Chart):", ["SMA 50", "SMA 200"])
     with col_c3:
-        sub_ind = st.multiselect("Sub-Charts (max. 5):", ["RP2 Indikator (SinepTrader)", "RP2 CF Indikator (SinepTrader)", "RSI 14"], max_selections=5)
+        sub_ind = st.multiselect("Sub-Charts (max. 5):", ["RP2 Indikator (SinepTrader)", "RP2 CF Indikator (SinepTrader)", "RP2 P E (SinepTrader)", "RSI 14"], max_selections=5)
     
     if ticker_input_chart:
         with st.spinner(f"Lade Kurs- und Fundamentaldaten für {ticker_input_chart}..."):
             try:
-                df_chart = yf.download(ticker_input_chart, period="4y", interval="1wk")
+                # Zeitraum von 4y auf 10y erhöht, da SMA 300 Wochen (~6 Jahre) Historie benötigt!
+                df_chart = yf.download(ticker_input_chart, period="10y", interval="1wk")
                 
                 if not df_chart.empty:
                     if isinstance(df_chart.columns, pd.MultiIndex):
@@ -607,6 +666,18 @@ with tab3:
                             # Nulllinie wie im Pine Script
                             fig.add_hline(y=0, line_dash="dot", line_color="gray", row=current_row, col=1)
                             
+                        elif ind == "RP2 P E (SinepTrader)":
+                            df_pe = calc_rp2_pe_indicator(df_chart, ticker_input_chart)
+                            
+                            if not df_pe.empty:
+                                # Haupt-Linie Blau (KGV)
+                                fig.add_trace(go.Scatter(x=df_pe.index, y=df_pe['PE'], line=dict(color='blue', width=2), name="P/E"), row=current_row, col=1)
+                                # Durchschnitt Grau
+                                fig.add_trace(go.Scatter(x=df_pe.index, y=df_pe['Average'], line=dict(color='gray', width=1.5), name="SMA 300"), row=current_row, col=1)
+                                # Buy/Sell Zonen Rot
+                                fig.add_trace(go.Scatter(x=df_pe.index, y=df_pe['Buy'], line=dict(color='red', width=1, dash='dash'), name="Buy Zone (10%)"), row=current_row, col=1)
+                                fig.add_trace(go.Scatter(x=df_pe.index, y=df_pe['Sell'], line=dict(color='red', width=1, dash='dash'), name="Sell Zone (90%)"), row=current_row, col=1)
+
                         current_row += 1
 
                     # Layout optimieren
