@@ -225,6 +225,75 @@ def calc_rp2_cf_indicator(df_chart, ticker_symbol):
     rp2_cf = (sqrt_val * (fund_merged['ROIC'] / df_chart['Close']) * 100) - 20
     return rp2_cf
 
+def calc_rp2_peg_indicator(df_chart, ticker_symbol):
+    data = load_stock_data(ticker_symbol)
+    if not data or data['guv_q'] is None or data['bilanz_q'] is None:
+        return pd.Series(np.nan, index=df_chart.index)
+        
+    guv_q = data['guv_q'].T
+    bilanz_q = data['bilanz_q'].T
+    info = data['info']
+    
+    guv_q.index = pd.to_datetime(guv_q.index)
+    bilanz_q.index = pd.to_datetime(bilanz_q.index)
+    guv_q = guv_q.sort_index()
+    bilanz_q = bilanz_q.sort_index()
+    
+    fund = pd.DataFrame(index=guv_q.index)
+    
+    def get_val(df, keys):
+        for k in keys:
+            if k in df.columns:
+                return df[k]
+        return pd.Series(np.nan, index=df.index)
+        
+    net_income_q = get_val(guv_q, ['Net Income', 'Net Income Common Stockholders'])
+    ebit_q = get_val(guv_q, ['EBIT', 'Operating Income'])
+    shares = get_val(guv_q, ['Basic Average Shares', 'Ordinary Shares Number'])
+    
+    if shares.isna().all():
+        shares = info.get('sharesOutstanding', np.nan)
+        
+    # TTM berechnen
+    net_income_ttm = net_income_q.rolling(window=4, min_periods=1).sum() 
+    ebit_ttm = ebit_q.rolling(window=4, min_periods=1).sum() 
+    eps_ttm = net_income_ttm / shares
+    
+    # 1-Year EPS Growth berechnen (Vergleich mit EPS vor 4 Quartalen)
+    eps_ttm_prev = eps_ttm.shift(4)
+    eps_growth = ((eps_ttm - eps_ttm_prev) / eps_ttm_prev.abs()) * 100
+    eps_growth = eps_growth.replace([np.inf, -np.inf], np.nan)
+    
+    # Laut Pine Script: eps = EPS_TTM * GROWTH
+    fund['EPS_Adj'] = eps_ttm * eps_growth
+    
+    fund['Equity'] = get_val(bilanz_q, ['Stockholders Equity', 'Total Equity Gross Minority Interest'])
+    fund['Total Assets'] = get_val(bilanz_q, ['Total Assets'])
+    fund['Current Liabilities'] = get_val(bilanz_q, ['Current Liabilities'])
+    
+    fund['BVPS'] = fund['Equity'] / shares
+    fund['Invested_Capital'] = fund['Total Assets'] - fund['Current Liabilities']
+    
+    # ROIC in Prozent (z.B. 15.0)
+    fund['ROIC'] = (ebit_ttm / fund['Invested_Capital']) * 100
+    
+    try:
+        chart_idx = df_chart.index.tz_localize(None)
+        fund.index = fund.index.tz_localize(None)
+    except:
+        chart_idx = df_chart.index
+        
+    fund_merged = fund.reindex(chart_idx.union(fund.index)).sort_index().ffill()
+    fund_merged = fund_merged.reindex(chart_idx) 
+    
+    target_value = 2.0  # 2.5 * 0.8
+    inner_sqrt = target_value * fund_merged['EPS_Adj'] * fund_merged['BVPS']
+    sqrt_val = np.where(inner_sqrt >= 0, np.sqrt(np.maximum(inner_sqrt, 0)), np.nan)
+    
+    # Formel: ((sqrt / Kurs) * (ROIC / 15)) - 1) * 10 - 10
+    rp2_peg = ((sqrt_val / df_chart['Close']) * (fund_merged['ROIC'] / 15.0) - 1) * 10 - 10
+    return rp2_peg
+
 def calc_rp2_pe_indicator(df_chart, ticker_symbol):
     data = load_stock_data(ticker_symbol)
     if not data or data['guv_q'] is None:
@@ -272,6 +341,224 @@ def calc_rp2_pe_indicator(df_chart, ticker_symbol):
     return pd.DataFrame({
         'PE': pe_series,
         'Average': pe_sma,
+        'Buy': buy_line,
+        'Sell': sell_line
+    })
+
+def calc_rp2_ev_ebitda_indicator(df_chart, ticker_symbol):
+    data = load_stock_data(ticker_symbol)
+    if not data or data['guv_q'] is None or data['bilanz_q'] is None:
+        return pd.DataFrame()
+
+    guv_q = data['guv_q'].T
+    guv_q.index = pd.to_datetime(guv_q.index)
+    guv_q = guv_q.sort_index()
+    
+    bilanz_q = data['bilanz_q'].T
+    bilanz_q.index = pd.to_datetime(bilanz_q.index)
+    bilanz_q = bilanz_q.sort_index()
+    
+    info = data['info']
+
+    def get_val(df, keys):
+        for k in keys:
+            if k in df.columns:
+                return df[k]
+        return pd.Series(np.nan, index=df.index)
+
+    # EBITDA beziehen (Fallback auf normales EBIT, falls kein spezielles EBITDA vorhanden)
+    ebitda_q = get_val(guv_q, ['EBITDA', 'Normalized EBITDA'])
+    if ebitda_q.isna().all():
+        ebitda_q = get_val(guv_q, ['EBIT', 'Operating Income'])
+        
+    shares_q = get_val(guv_q, ['Basic Average Shares', 'Ordinary Shares Number'])
+    if shares_q.isna().all():
+        shares_q = pd.Series(info.get('sharesOutstanding', np.nan), index=guv_q.index)
+
+    # Schulden und Cash aus der Bilanz beziehen
+    total_debt_q = get_val(bilanz_q, ['Total Debt']).fillna(0)
+    cash_q = get_val(bilanz_q, ['Cash And Cash Equivalents', 'Cash Cash Equivalents And Short Term Investments', 'Total Cash']).fillna(0)
+
+    # TTM (Trailing Twelve Months) berechnen
+    ebitda_ttm = ebitda_q.rolling(window=4, min_periods=1).sum() 
+
+    try:
+        chart_idx = df_chart.index.tz_localize(None)
+        ebitda_ttm.index = ebitda_ttm.index.tz_localize(None)
+        shares_q.index = shares_q.index.tz_localize(None)
+        total_debt_q.index = total_debt_q.index.tz_localize(None)
+        cash_q.index = cash_q.index.tz_localize(None)
+    except:
+        chart_idx = df_chart.index
+
+    # Auf Chart-Index mappen (Forward Fill)
+    ebitda_merged = ebitda_ttm.reindex(chart_idx.union(ebitda_ttm.index)).sort_index().ffill()
+    ebitda_merged = ebitda_merged.reindex(chart_idx)
+    
+    shares_merged = shares_q.reindex(chart_idx.union(shares_q.index)).sort_index().ffill()
+    shares_merged = shares_merged.reindex(chart_idx)
+    
+    debt_merged = total_debt_q.reindex(chart_idx.union(total_debt_q.index)).sort_index().ffill()
+    debt_merged = debt_merged.reindex(chart_idx)
+    
+    cash_merged = cash_q.reindex(chart_idx.union(cash_q.index)).sort_index().ffill()
+    cash_merged = cash_merged.reindex(chart_idx)
+
+    # Echter Enterprise Value = Market Cap + Schulden - Cash
+    mc = df_chart['Close'] * shares_merged
+    ev = mc + debt_merged - cash_merged
+
+    # EV/EBITDA
+    ev_ebitda_vals = np.where(ebitda_merged > 0, ev / ebitda_merged, np.nan)
+    ev_ebitda_series = pd.Series(ev_ebitda_vals, index=df_chart.index)
+
+    ev_sma = ev_ebitda_series.rolling(window=300, min_periods=1).mean()
+
+    # Perzentil-Kanäle (Kauf-/Verkaufszone)
+    buy_line = ev_ebitda_series.expanding(min_periods=10).quantile(0.1)
+    sell_line = ev_ebitda_series.expanding(min_periods=10).quantile(0.9)
+
+    return pd.DataFrame({
+        'EV_EBITDA': ev_ebitda_series,
+        'Average': ev_sma,
+        'Buy': buy_line,
+        'Sell': sell_line
+    })
+
+def calc_rp2_ev_sales_indicator(df_chart, ticker_symbol):
+    data = load_stock_data(ticker_symbol)
+    if not data or data['guv_q'] is None or data['bilanz_q'] is None:
+        return pd.DataFrame()
+
+    guv_q = data['guv_q'].T
+    guv_q.index = pd.to_datetime(guv_q.index)
+    guv_q = guv_q.sort_index()
+    
+    bilanz_q = data['bilanz_q'].T
+    bilanz_q.index = pd.to_datetime(bilanz_q.index)
+    bilanz_q = bilanz_q.sort_index()
+    
+    info = data['info']
+
+    def get_val(df, keys):
+        for k in keys:
+            if k in df.columns:
+                return df[k]
+        return pd.Series(np.nan, index=df.index)
+
+    # Total Revenue (Umsatz)
+    revenue_q = get_val(guv_q, ['Total Revenue', 'Operating Revenue', 'Revenue'])
+        
+    shares_q = get_val(guv_q, ['Basic Average Shares', 'Ordinary Shares Number'])
+    if shares_q.isna().all():
+        shares_q = pd.Series(info.get('sharesOutstanding', np.nan), index=guv_q.index)
+
+    # Schulden und Cash aus der Bilanz beziehen (für echten EV)
+    total_debt_q = get_val(bilanz_q, ['Total Debt']).fillna(0)
+    cash_q = get_val(bilanz_q, ['Cash And Cash Equivalents', 'Cash Cash Equivalents And Short Term Investments', 'Total Cash']).fillna(0)
+
+    # TTM (Trailing Twelve Months) für Umsatz berechnen
+    revenue_ttm = revenue_q.rolling(window=4, min_periods=1).sum() 
+
+    try:
+        chart_idx = df_chart.index.tz_localize(None)
+        revenue_ttm.index = revenue_ttm.index.tz_localize(None)
+        shares_q.index = shares_q.index.tz_localize(None)
+        total_debt_q.index = total_debt_q.index.tz_localize(None)
+        cash_q.index = cash_q.index.tz_localize(None)
+    except:
+        chart_idx = df_chart.index
+
+    # Auf Chart-Index mappen (Forward Fill)
+    revenue_merged = revenue_ttm.reindex(chart_idx.union(revenue_ttm.index)).sort_index().ffill().reindex(chart_idx)
+    shares_merged = shares_q.reindex(chart_idx.union(shares_q.index)).sort_index().ffill().reindex(chart_idx)
+    debt_merged = total_debt_q.reindex(chart_idx.union(total_debt_q.index)).sort_index().ffill().reindex(chart_idx)
+    cash_merged = cash_q.reindex(chart_idx.union(cash_q.index)).sort_index().ffill().reindex(chart_idx)
+
+    # Echter Enterprise Value = Market Cap + Schulden - Cash
+    mc = df_chart['Close'] * shares_merged
+    ev = mc + debt_merged - cash_merged
+
+    # EV/Sales (Umsatz)
+    ev_sales_vals = np.where(revenue_merged > 0, ev / revenue_merged, np.nan)
+    ev_sales_series = pd.Series(ev_sales_vals, index=df_chart.index)
+
+    ev_sma = ev_sales_series.rolling(window=300, min_periods=1).mean()
+
+    # Perzentil-Kanäle (Kauf-/Verkaufszone)
+    buy_line = ev_sales_series.expanding(min_periods=10).quantile(0.1)
+    sell_line = ev_sales_series.expanding(min_periods=10).quantile(0.9)
+
+    return pd.DataFrame({
+        'EV_Sales': ev_sales_series,
+        'Average': ev_sma,
+        'Buy': buy_line,
+        'Sell': sell_line
+    })
+
+def calc_rp2_p_fcf_indicator(df_chart, ticker_symbol):
+    data = load_stock_data(ticker_symbol)
+    if not data or data['cashflow_q'] is None or data['guv_q'] is None:
+        return pd.DataFrame()
+
+    cf_q = data['cashflow_q'].T
+    cf_q.index = pd.to_datetime(cf_q.index)
+    cf_q = cf_q.sort_index()
+    
+    guv_q = data['guv_q'].T
+    guv_q.index = pd.to_datetime(guv_q.index)
+    guv_q = guv_q.sort_index()
+    
+    info = data['info']
+
+    def get_val(df, keys):
+        for k in keys:
+            if k in df.columns:
+                return df[k]
+        return pd.Series(np.nan, index=df.index)
+
+    # 1. Free Cash Flow auslesen
+    fcf_q = get_val(cf_q, ['Free Cash Flow'])
+    
+    # Fallback: Falls 'Free Cash Flow' nicht explizit da ist -> Operativer CF minus Capex
+    if fcf_q.isna().all():
+        ocf = get_val(cf_q, ['Operating Cash Flow', 'Total Cash From Operating Activities'])
+        capex = get_val(cf_q, ['Capital Expenditure'])
+        # Capex wird oft negativ ausgewiesen (als Abfluss), daher nutzen wir .abs() zur Sicherheit
+        fcf_q = ocf - capex.abs()
+        
+    shares_q = get_val(guv_q, ['Basic Average Shares', 'Ordinary Shares Number'])
+    if shares_q.isna().all():
+        shares_q = pd.Series(info.get('sharesOutstanding', np.nan), index=cf_q.index)
+
+    # TTM (Trailing Twelve Months) für FCF berechnen
+    fcf_ttm = fcf_q.rolling(window=4, min_periods=1).sum() 
+
+    try:
+        chart_idx = df_chart.index.tz_localize(None)
+        fcf_ttm.index = fcf_ttm.index.tz_localize(None)
+        shares_q.index = shares_q.index.tz_localize(None)
+    except:
+        chart_idx = df_chart.index
+
+    # Auf Chart-Index mappen (Forward Fill)
+    fcf_merged = fcf_ttm.reindex(chart_idx.union(fcf_ttm.index)).sort_index().ffill().reindex(chart_idx)
+    shares_merged = shares_q.reindex(chart_idx.union(shares_q.index)).sort_index().ffill().reindex(chart_idx)
+
+    # P/FCF (Price to Free Cash Flow) berechnen
+    fcf_per_share = fcf_merged / shares_merged
+    p_fcf_vals = np.where(fcf_per_share > 0, df_chart['Close'] / fcf_per_share, np.nan)
+    p_fcf_series = pd.Series(p_fcf_vals, index=df_chart.index)
+
+    p_fcf_sma = p_fcf_series.rolling(window=300, min_periods=1).mean()
+
+    # Perzentil-Kanäle (Kauf-/Verkaufszone)
+    buy_line = p_fcf_series.expanding(min_periods=10).quantile(0.1)
+    sell_line = p_fcf_series.expanding(min_periods=10).quantile(0.9)
+
+    return pd.DataFrame({
+        'P_FCF': p_fcf_series,
+        'Average': p_fcf_sma,
         'Buy': buy_line,
         'Sell': sell_line
     })
@@ -766,7 +1053,7 @@ with tab3:
     with col_c2:
         overlay_ind = st.multiselect("Overlays (im Chart):", ["SMA 50", "SMA 200", "RP2 Intrinsic Value", "Liquiditätswert pro Aktie", "Greenwald Valuation"])
     with col_c3:
-        sub_ind = st.multiselect("Sub-Charts (max. 5):", ["RP2 Indikator (SinepTrader)", "RP2 CF Indikator (SinepTrader)", "RP2 P E (SinepTrader)", "RSI 14"], max_selections=5)
+        sub_ind = st.multiselect("Sub-Charts (max. 5):", ["RP2 Indikator (SinepTrader)", "RP2 CF Indikator (SinepTrader)", "RP2 PEG Indikator (SinepTrader)", "RP2 P E (SinepTrader)", "RP2 EV EBITDA (SinepTrader)", "RP2 EV Sales (SinepTrader)", "RP2 P FCF (SinepTrader)", "RSI 14"], max_selections=5)
     
     rp2iv_params = {
         'targetMultiplier': 112.5, 'expectedGrowth': 0.0, 'normalizedPE': 15.0,
@@ -902,8 +1189,14 @@ with tab3:
                             
                         elif ind == "RP2 CF Indikator (SinepTrader)":
                             rp2_cf_vals = calc_rp2_cf_indicator(df_chart, ticker_input_chart)
-                            colors = ['#26a69a' if val >= 0 else '#ef5350' for val in rp2_cf_vals]
+                            colors = ['#26a69a' if pd.notna(val) and val >= 0 else '#ef5350' for val in rp2_cf_vals]
                             fig.add_trace(go.Bar(x=rp2_cf_vals.index, y=rp2_cf_vals, marker_color=colors, name="RP2 CF"), row=current_row, col=1)
+                            fig.add_hline(y=0, line_dash="dot", line_color="gray", row=current_row, col=1)
+                            
+                        elif ind == "RP2 PEG Indikator (SinepTrader)":
+                            rp2_peg_vals = calc_rp2_peg_indicator(df_chart, ticker_input_chart)
+                            colors = ['#26a69a' if pd.notna(val) and val >= 0 else '#ef5350' for val in rp2_peg_vals]
+                            fig.add_trace(go.Bar(x=rp2_peg_vals.index, y=rp2_peg_vals, marker_color=colors, name="RP2 PEG"), row=current_row, col=1)
                             fig.add_hline(y=0, line_dash="dot", line_color="gray", row=current_row, col=1)
                             
                         elif ind == "RP2 P E (SinepTrader)":
@@ -913,6 +1206,30 @@ with tab3:
                                 fig.add_trace(go.Scatter(x=df_pe.index, y=df_pe['Average'], line=dict(color='gray', width=1.5), name="SMA 300"), row=current_row, col=1)
                                 fig.add_trace(go.Scatter(x=df_pe.index, y=df_pe['Buy'], line=dict(color='red', width=1, dash='dash'), name="Buy Zone"), row=current_row, col=1)
                                 fig.add_trace(go.Scatter(x=df_pe.index, y=df_pe['Sell'], line=dict(color='red', width=1, dash='dash'), name="Sell Zone"), row=current_row, col=1)
+                                
+                        elif ind == "RP2 EV EBITDA (SinepTrader)":
+                            df_ev = calc_rp2_ev_ebitda_indicator(df_chart, ticker_input_chart)
+                            if not df_ev.empty:
+                                fig.add_trace(go.Scatter(x=df_ev.index, y=df_ev['EV_EBITDA'], line=dict(color='blue', width=2), name="EV/EBITDA"), row=current_row, col=1)
+                                fig.add_trace(go.Scatter(x=df_ev.index, y=df_ev['Average'], line=dict(color='gray', width=1.5), name="SMA 300"), row=current_row, col=1)
+                                fig.add_trace(go.Scatter(x=df_ev.index, y=df_ev['Buy'], line=dict(color='red', width=1, dash='dash'), name="Buy Zone"), row=current_row, col=1)
+                                fig.add_trace(go.Scatter(x=df_ev.index, y=df_ev['Sell'], line=dict(color='red', width=1, dash='dash'), name="Sell Zone"), row=current_row, col=1)
+                                
+                        elif ind == "RP2 EV Sales (SinepTrader)":
+                            df_sales = calc_rp2_ev_sales_indicator(df_chart, ticker_input_chart)
+                            if not df_sales.empty:
+                                fig.add_trace(go.Scatter(x=df_sales.index, y=df_sales['EV_Sales'], line=dict(color='blue', width=2), name="EV/Sales"), row=current_row, col=1)
+                                fig.add_trace(go.Scatter(x=df_sales.index, y=df_sales['Average'], line=dict(color='gray', width=1.5), name="SMA 300"), row=current_row, col=1)
+                                fig.add_trace(go.Scatter(x=df_sales.index, y=df_sales['Buy'], line=dict(color='red', width=1, dash='dash'), name="Buy Zone"), row=current_row, col=1)
+                                fig.add_trace(go.Scatter(x=df_sales.index, y=df_sales['Sell'], line=dict(color='red', width=1, dash='dash'), name="Sell Zone"), row=current_row, col=1)
+                                
+                        elif ind == "RP2 P FCF (SinepTrader)":
+                            df_p_fcf = calc_rp2_p_fcf_indicator(df_chart, ticker_input_chart)
+                            if not df_p_fcf.empty:
+                                fig.add_trace(go.Scatter(x=df_p_fcf.index, y=df_p_fcf['P_FCF'], line=dict(color='blue', width=2), name="P/FCF"), row=current_row, col=1)
+                                fig.add_trace(go.Scatter(x=df_p_fcf.index, y=df_p_fcf['Average'], line=dict(color='gray', width=1.5), name="SMA 300"), row=current_row, col=1)
+                                fig.add_trace(go.Scatter(x=df_p_fcf.index, y=df_p_fcf['Buy'], line=dict(color='red', width=1, dash='dash'), name="Buy Zone"), row=current_row, col=1)
+                                fig.add_trace(go.Scatter(x=df_p_fcf.index, y=df_p_fcf['Sell'], line=dict(color='red', width=1, dash='dash'), name="Sell Zone"), row=current_row, col=1)
                         current_row += 1
 
                     fig.update_layout(
