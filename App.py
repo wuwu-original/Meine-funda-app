@@ -632,34 +632,47 @@ with tab3:
     with col_c1:
         ticker_input_chart = st.text_input("Ticker-Symbol:", key="chart_ticker").upper()
     with col_c2:
-        overlay_ind = st.multiselect("Overlays (im Chart):", ["SMA 50", "SMA 200", "RP2 Intrinsic Value"])
+        overlay_ind = st.multiselect("Overlays (im Chart):", ["SMA 50", "SMA 200", "RP2 Intrinsic Value", "Liquiditätswert pro Aktie"])
     with col_c3:
         sub_ind = st.multiselect("Sub-Charts (max. 5):", ["RP2 Indikator (SinepTrader)", "RP2 CF Indikator (SinepTrader)", "RP2 P E (SinepTrader)", "RSI 14"], max_selections=5)
     
-    # Dynamischer Parameter-Bereich für Overlays, die Inputs benötigen
-    rp2iv_params = {}
-    if "RP2 Intrinsic Value" in overlay_ind:
-        st.markdown("### ⚙️ Parameter: RP2 Intrinsic Value")
+    # Dynamischer Parameter-Bereich für Overlays
+    # Wir setzen Standardwerte für alles, falls ein Menüpunkt nicht ausgewählt ist
+    rp2iv_params = {
+        'targetMultiplier': 112.5, 'expectedGrowth': 0.0, 'normalizedPE': 15.0,
+        'w_cash': 1.0, 'w_recv': 0.75, 'w_inv': 0.50, 'w_ppe': 0.01,
+        'w_recvh': 0.90, 'w_invh': 0.75, 'w_ppeh': 0.50, 'normalizePS': True
+    }
+    
+    needs_params = "RP2 Intrinsic Value" in overlay_ind or "Liquiditätswert pro Aktie" in overlay_ind
+    
+    if needs_params:
+        st.markdown("### ⚙️ Parameter-Einstellungen")
         with st.container():
-            col_p1, col_p2, col_p3 = st.columns(3)
-            rp2iv_params['targetMultiplier'] = col_p1.number_input("Bewertungs-Multiplikator", value=112.5, step=1.0)
-            rp2iv_params['expectedGrowth'] = col_p2.number_input("Erw. Gewinnwachstum nächste 12M (%)", value=0.0, step=1.0) / 100.0
-            rp2iv_params['normalizedPE'] = col_p3.number_input("Ziel/Normalisierter KGV", value=15.0, step=1.0)
-            
-            st.markdown("**Gewichtung der Vermögenswerte (Graham):**")
-            col_w1, col_w2, col_w3, col_w4 = st.columns(4)
-            rp2iv_params['w_cash'] = col_w1.number_input("Cash & STI", value=1.00, step=0.05)
-            rp2iv_params['w_recv'] = col_w2.number_input("Forderungen (netto)", value=0.75, step=0.05)
-            rp2iv_params['w_inv'] = col_w3.number_input("Vorräte", value=0.50, step=0.05)
-            rp2iv_params['w_ppe'] = col_w4.number_input("Sachanlagen (PPE)", value=0.01, step=0.05)
-            
-            st.markdown("**Alternative obere Gewichte:**")
-            col_w1h, col_w2h, col_w3h = st.columns(3)
-            rp2iv_params['w_recvh'] = col_w1h.number_input("Forderungen (H)", value=0.90, step=0.05)
-            rp2iv_params['w_invh'] = col_w2h.number_input("Vorräte (H)", value=0.75, step=0.05)
-            rp2iv_params['w_ppeh'] = col_w3h.number_input("Sachanlagen (H)", value=0.50, step=0.05)
-            
-            rp2iv_params['normalizePS'] = st.checkbox("Pro Aktie anzeigen (÷ Shares)", value=True)
+            # Zeige nur die Parameter an, deren Indikator auch ausgewählt wurde
+            if "RP2 Intrinsic Value" in overlay_ind:
+                st.markdown("**RP2 Intrinsic Value:**")
+                col_p1, col_p2, col_p3 = st.columns(3)
+                rp2iv_params['targetMultiplier'] = col_p1.number_input("Bewertungs-Multiplikator", value=112.5, step=1.0)
+                rp2iv_params['expectedGrowth'] = col_p2.number_input("Erw. Gewinnwachstum (nächste 12M)", value=0.0, step=0.01)
+                rp2iv_params['normalizedPE'] = col_p3.number_input("Ziel KGV", value=15.0, step=1.0)
+                st.write("") # Kleiner Abstand
+                
+            if "Liquiditätswert pro Aktie" in overlay_ind:
+                st.markdown("**Gewichtung der Vermögenswerte (Liquiditätswert):**")
+                col_w1, col_w2, col_w3, col_w4 = st.columns(4)
+                rp2iv_params['w_cash'] = col_w1.number_input("Cash & STI", value=1.00, step=0.05)
+                rp2iv_params['w_recv'] = col_w2.number_input("Forderungen (netto)", value=0.75, step=0.05)
+                rp2iv_params['w_inv'] = col_w3.number_input("Vorräte", value=0.50, step=0.05)
+                rp2iv_params['w_ppe'] = col_w4.number_input("Sachanlagen", value=0.01, step=0.05)
+                
+                st.markdown("**Alternative obere Gewichte:**")
+                col_w1h, col_w2h, col_w3h = st.columns(3)
+                rp2iv_params['w_recvh'] = col_w1h.number_input("Forderungen (H)", value=0.90, step=0.05)
+                rp2iv_params['w_invh'] = col_w2h.number_input("Vorräte (H)", value=0.75, step=0.05)
+                rp2iv_params['w_ppeh'] = col_w3h.number_input("Sachanlagen (H)", value=0.50, step=0.05)
+                
+                rp2iv_params['normalizePS'] = st.checkbox("Pro Aktie anzeigen (÷ Shares)", value=True)
         st.markdown("---")
         
     if ticker_input_chart:
@@ -676,7 +689,7 @@ with tab3:
                     
                     fig = make_subplots(rows=num_subcharts + 1, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=row_heights)
                     
-                    # 1. Haupt-Candlestick Chart (Wir plotten ihn als Linie bzw. Basis für Schattierungen)
+                    # 1. Haupt-Candlestick Chart 
                     fig.add_trace(go.Candlestick(
                         x=df_chart.index, open=df_chart['Open'], high=df_chart['High'],
                         low=df_chart['Low'], close=df_chart['Close'], name="Kurs"
@@ -688,22 +701,18 @@ with tab3:
                     if "SMA 200" in overlay_ind:
                         fig.add_trace(go.Scatter(x=df_chart.index, y=calc_sma(df_chart['Close'], 200), line=dict(color='orange', width=2), name="SMA 200"), row=1, col=1)
                         
-                    if "RP2 Intrinsic Value" in overlay_ind:
+                    if needs_params:
+                        # Wir berechnen die Daten nur einmal, nutzen sie aber für beide Indikatoren
                         df_iv = calc_rp2_intrinsic(df_chart, ticker_input_chart, rp2iv_params)
                         if not df_iv.empty:
-                            # Plotly Trick für die Margin of Safety Schattierung:
-                            # Wir nutzen zwei Scatter-Linien und füllen den Zwischenraum (Close vs Intrinsic Value)
-                            
-                            # Die blaue Haupt-Linie
-                            fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['IntrinsicValue'], line=dict(color='blue', width=2), name="Intrinsischer Wert"), row=1, col=1)
-                            
-                            # Die gelbe Linie ohne Wachstum
-                            fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['CurrentIntrinsic'], line=dict(color='gold', width=2), name="Intrinsisch (ohne Wachstum)"), row=1, col=1)
-                            
-                            # Die Graham Asset Summen
-                            fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['Val_PS'], line=dict(color='gray', width=2), name="Konservative Vermögenssumme"), row=1, col=1)
-                            fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['Val_PSH'], line=dict(color='darkgray', width=2), name="Obere Vermögenssumme"), row=1, col=1)
-                            fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['Val_PSTOT'], line=dict(color='lightblue', width=2), name="Summe mit allen Verb."), row=1, col=1)
+                            if "RP2 Intrinsic Value" in overlay_ind:
+                                fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['IntrinsicValue'], line=dict(color='blue', width=2), name="Intrinsischer Wert"), row=1, col=1)
+                                fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['CurrentIntrinsic'], line=dict(color='gold', width=2), name="Intrinsisch (ohne Wachstum)"), row=1, col=1)
+                                
+                            if "Liquiditätswert pro Aktie" in overlay_ind:
+                                fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['Val_PS'], line=dict(color='gray', width=2), name="Konservative Vermögenssumme"), row=1, col=1)
+                                fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['Val_PSH'], line=dict(color='darkgray', width=2), name="Obere Vermögenssumme"), row=1, col=1)
+                                fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['Val_PSTOT'], line=dict(color='lightblue', width=2), name="Summe mit allen Verb."), row=1, col=1)
 
                     # 3. Sub-Charts
                     current_row = 2
