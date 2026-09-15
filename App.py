@@ -385,6 +385,7 @@ def calc_greenwald_valuation(df_chart, ticker_symbol, params):
     guv_q = guv_q.sort_index()
     bilanz_q = bilanz_q.sort_index()
     
+    # 1. Gemeinsamen Kalender (Index) erstellen
     fund = pd.DataFrame(index=bilanz_q.index.union(guv_q.index)).sort_index()
     
     def get_val(df, keys):
@@ -393,7 +394,7 @@ def calc_greenwald_valuation(df_chart, ticker_symbol, params):
                 return df[k]
         return pd.Series(np.nan, index=df.index)
         
-    # Bilanz
+    # 2. Daten auf ihrem originalen Index abrufen
     cash = get_val(bilanz_q, ['Cash And Cash Equivalents', 'Total Cash']).fillna(0)
     receivables = get_val(bilanz_q, ['Net Receivables', 'Accounts Receivable']).fillna(0)
     inventory = get_val(bilanz_q, ['Inventory']).fillna(0)
@@ -401,46 +402,65 @@ def calc_greenwald_valuation(df_chart, ticker_symbol, params):
     total_liabilities = get_val(bilanz_q, ['Total Liabilities']).fillna(0)
     
     shares_q = get_val(guv_q, ['Basic Average Shares', 'Ordinary Shares Number'])
-    if shares_q.isna().all():
-        shares_q = info.get('sharesOutstanding', np.nan)
         
-    # GuV (Trailing Twelve Months)
     rnd_q = get_val(guv_q, ['Research And Development']).fillna(0)
     sga_q = get_val(guv_q, ['Selling General And Administration', 'Operating Expense']).fillna(0)
     ebit_q = get_val(guv_q, ['EBIT', 'Operating Income']).fillna(0)
     tax_q = get_val(guv_q, ['Tax Provision', 'Income Tax Expense']).fillna(0)
     pretax_q = get_val(guv_q, ['Pretax Income']).fillna(0)
     
+    # TTM (Trailing Twelve Months) auf Original-Daten berechnen
     rnd_ttm = rnd_q.rolling(window=4, min_periods=1).sum().abs()
     sga_ttm = sga_q.rolling(window=4, min_periods=1).sum().abs()
     ebit_ttm = ebit_q.rolling(window=4, min_periods=1).sum()
     tax_ttm = tax_q.rolling(window=4, min_periods=1).sum().abs()
     pretax_ttm = pretax_q.rolling(window=4, min_periods=1).sum()
     
-    # 1. Asset Value (Reproduktion)
+    # 3. CRASH-SCHUTZ: Alle Datenreihen zwingend auf den einheitlichen Kalender bringen
+    cash = cash.reindex(fund.index).ffill()
+    receivables = receivables.reindex(fund.index).ffill()
+    inventory = inventory.reindex(fund.index).ffill()
+    ppe_net = ppe_net.reindex(fund.index).ffill()
+    total_liabilities = total_liabilities.reindex(fund.index).ffill()
+    
+    rnd_ttm = rnd_ttm.reindex(fund.index).ffill()
+    sga_ttm = sga_ttm.reindex(fund.index).ffill()
+    ebit_ttm = ebit_ttm.reindex(fund.index).ffill()
+    tax_ttm = tax_ttm.reindex(fund.index).ffill()
+    pretax_ttm = pretax_ttm.reindex(fund.index).ffill()
+    
+    if shares_q.isna().all():
+        shares_aligned = pd.Series(info.get('sharesOutstanding', np.nan), index=fund.index)
+    else:
+        shares_aligned = shares_q.reindex(fund.index).ffill()
+    
+    # 4. Mathematik durchführen (Jetzt ist alles sicher, da alle Listen exakt gleich lang sind)
     adj_cash = cash * params['cash_factor']
     adj_recv = receivables * params['recv_factor']
     adj_inv = inventory * params['inv_factor']
     adj_ppe = ppe_net * params['ppe_factor']
     
-    add_rnd = (rnd_ttm * params['rnd_years']) if params['use_intangibles'] else 0
-    add_sga = (sga_ttm * params['sga_years']) if params['use_intangibles'] else 0
+    add_rnd = (rnd_ttm * params['rnd_years']) if params['use_intangibles'] else pd.Series(0, index=fund.index)
+    add_sga = (sga_ttm * params['sga_years']) if params['use_intangibles'] else pd.Series(0, index=fund.index)
     
     total_reproduction_assets = adj_cash + adj_recv + adj_inv + adj_ppe + add_rnd + add_sga
     av_total = total_reproduction_assets - total_liabilities
-    av_per_share = np.where(shares_q > 0, av_total / shares_q, np.nan)
     
-    # 2. Earnings Power Value (EPV)
+    # Arrays teilen
+    av_per_share = np.where(shares_aligned > 0, av_total / shares_aligned, np.nan)
+    
+    # Earnings Power Value
     eff_tax_rate = np.where(pretax_ttm != 0, tax_ttm / pretax_ttm, 0.25)
-    final_tax_rate = np.clip(eff_tax_rate, 0.0, 0.40) # Begrenzung 0% - 40%
+    final_tax_rate = np.clip(eff_tax_rate, 0.0, 0.40) 
     
     nopat = ebit_ttm * (1 - final_tax_rate)
     epv_total = nopat / params['wacc']
-    epv_per_share = np.where(shares_q > 0, epv_total / shares_q, np.nan)
+    epv_per_share = np.where(shares_aligned > 0, epv_total / shares_aligned, np.nan)
     
     fund['AV_PS'] = av_per_share
     fund['EPV_PS'] = epv_per_share
     
+    # 5. Zusammenführen mit dem Kurs-Chart Kalender (Wochenkerzen)
     try:
         chart_idx = df_chart.index.tz_localize(None)
         fund.index = fund.index.tz_localize(None)
