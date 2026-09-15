@@ -26,6 +26,11 @@ def load_stock_data(ticker_symbol):
         insider = stock.major_holders
         
         try:
+            insider_trans = stock.insider_transactions
+        except:
+            insider_trans = None
+        
+        try:
             ebit = info.get('ebitda', 0) 
             total_assets = info.get('totalAssets', bilanz_a.loc['Total Assets'].iloc[0] if 'Total Assets' in bilanz_a.index else 1)
             current_liabilities = bilanz_a.loc['Current Liabilities'].iloc[0] if 'Current Liabilities' in bilanz_a.index else 0
@@ -49,6 +54,7 @@ def load_stock_data(ticker_symbol):
             "cashflow_q": cf_q,
             "cashflow_a": cf_a,
             "insider": insider,
+            "insider_trans": insider_trans,
             "calc_roc": roc,
             "calc_roic": roic
         }
@@ -672,7 +678,7 @@ with tab1:
             
             st.markdown("---")
             
-            sub1, sub2, sub3, sub4, sub5 = st.tabs(["GuV", "Bilanz", "Cashflow", "Statistiken", "Insider"])
+            sub1, sub2, sub3, sub4, sub5, sub6 = st.tabs(["GuV", "Bilanz", "Cashflow", "Statistiken", "Insider Anteile", "Insider Trades"])
             
             with sub1: render_statement("GuV (Income Statement)", data['guv_a'], data['guv_q'], "guv")
             with sub2: render_statement("Bilanz (Balance Sheet)", data['bilanz_a'], data['bilanz_q'], "bilanz")
@@ -702,9 +708,20 @@ with tab1:
                     st.warning("Nicht genügend historische Daten vorhanden.")
             with sub5:
                 if data['insider'] is not None and not data['insider'].empty:
-                    st.dataframe(data['insider'], use_container_width=True)
+                    df_insider = data['insider'].copy()
+                    # Numerische Werte in Prozent umwandeln
+                    for col in df_insider.columns:
+                        if pd.api.types.is_numeric_dtype(df_insider[col]):
+                            df_insider[col] = df_insider[col].apply(lambda x: f"{x * 100:.2f}%" if pd.notna(x) else x)
+                    st.dataframe(df_insider, use_container_width=True)
                 else:
                     st.write("Keine Insider-Daten verfügbar.")
+            with sub6:
+                if data['insider_trans'] is not None and not data['insider_trans'].empty:
+                    df_trans = data['insider_trans'].copy()
+                    st.dataframe(df_trans, use_container_width=True)
+                else:
+                    st.write("Keine aktuellen Insider-Transaktionen gefunden.")
         else:
             st.error("Ticker nicht gefunden oder keine Daten verfügbar.")
 
