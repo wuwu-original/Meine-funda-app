@@ -625,7 +625,17 @@ def render_statement(title, df_annual, df_quarterly, key_prefix):
                 chart_data.columns = [f"{col}{suffix}" for col in chart_data.columns]
                 
         with chart_placeholder:
-            st.bar_chart(chart_data)
+            fig = go.Figure()
+            for col in chart_data.columns:
+                fig.add_trace(go.Bar(x=chart_data.index, y=chart_data[col], name=col))
+            
+            fig.update_layout(
+                barmode='group',
+                margin=dict(l=10, r=10, t=10, b=10),
+                template="plotly_white",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
 tab1, tab2, tab3 = st.tabs(["🔍 Einzel-Analyse", "🎯 Screener", "📈 Kursverlauf"])
 
