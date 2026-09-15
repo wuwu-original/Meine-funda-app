@@ -115,7 +115,7 @@ def calc_rsi(series, period=14):
 def calc_rp2_indicator(df_chart, ticker_symbol):
     """
     Übersetzung des Pine Scripts RP2.
-    Verschmilzt wöchentliche Kursdaten mit vierteljährlichen Fundamentaldaten.
+    Korrigiert: Nutzt nun TTM (Trailing Twelve Months) für EPS und ROIC.
     """
     data = load_stock_data(ticker_symbol)
     if not data or data['guv_q'] is None or data['bilanz_q'] is None:
@@ -125,9 +125,11 @@ def calc_rp2_indicator(df_chart, ticker_symbol):
     bilanz_q = data['bilanz_q'].T
     info = data['info']
     
-    # Datum als Index sicherstellen
+    # Datum als Index sicherstellen und GANZ WICHTIG: chronologisch aufsteigend sortieren
     guv_q.index = pd.to_datetime(guv_q.index)
     bilanz_q.index = pd.to_datetime(bilanz_q.index)
+    guv_q = guv_q.sort_index()
+    bilanz_q = bilanz_q.sort_index()
     
     fund = pd.DataFrame(index=guv_q.index)
     
@@ -138,44 +140,50 @@ def calc_rp2_indicator(df_chart, ticker_symbol):
                 return df[k]
         return pd.Series(np.nan, index=df.index)
         
-    fund['Net Income'] = get_val(guv_q, ['Net Income', 'Net Income Common Stockholders'])
-    fund['EBIT'] = get_val(guv_q, ['EBIT', 'Operating Income'])
-    fund['Shares'] = get_val(guv_q, ['Basic Average Shares', 'Ordinary Shares Number'])
-    if fund['Shares'].isna().all():
-        fund['Shares'] = info.get('sharesOutstanding', np.nan)
+    net_income_q = get_val(guv_q, ['Net Income', 'Net Income Common Stockholders'])
+    ebit_q = get_val(guv_q, ['EBIT', 'Operating Income'])
+    shares = get_val(guv_q, ['Basic Average Shares', 'Ordinary Shares Number'])
+    
+    if shares.isna().all():
+        shares = info.get('sharesOutstanding', np.nan)
         
+    # TTM (Trailing Twelve Months) berechnen!
+    # yfinance liefert oft nur ca. 4-5 Quartale. Wir nehmen den Durchschnitt der vorhandenen
+    # Quartale (max 4) und multiplizieren mit 4 (Annualisierung), um den TTM-Wert stabil zu simulieren.
+    net_income_ttm = net_income_q.rolling(window=4, min_periods=1).mean() * 4
+    ebit_ttm = ebit_q.rolling(window=4, min_periods=1).mean() * 4
+        
+    fund['EPS_TTM'] = net_income_ttm / shares
+    
     fund['Equity'] = get_val(bilanz_q, ['Stockholders Equity', 'Total Equity Gross Minority Interest'])
     fund['Total Assets'] = get_val(bilanz_q, ['Total Assets'])
     fund['Current Liabilities'] = get_val(bilanz_q, ['Current Liabilities'])
     
-    # Berechnung der fundamentalen Basiswerte (Quartalsweise)
-    fund['EPS'] = fund['Net Income'] / fund['Shares']
-    fund['BVPS'] = fund['Equity'] / fund['Shares']
+    fund['BVPS'] = fund['Equity'] / shares
     fund['Invested_Capital'] = fund['Total Assets'] - fund['Current Liabilities']
-    fund['ROIC'] = fund['EBIT'] / fund['Invested_Capital']
+    fund['ROIC'] = ebit_ttm / fund['Invested_Capital'] # TTM ROIC
     
     # Zusammenführen mit den wöchentlichen Kursdaten
-    # Zeitzonen entfernen, um Konflikte beim Mergen zu verhindern
     try:
         chart_idx = df_chart.index.tz_localize(None)
         fund.index = fund.index.tz_localize(None)
     except:
         chart_idx = df_chart.index
         
-    # Forward Fill: Füllt die Quartalswerte auf die wöchentlichen Tage auf (Treppenstufen-Effekt)
+    # Forward Fill: Füllt die Quartalswerte auf die wöchentlichen Tage auf
     fund_merged = fund.reindex(chart_idx.union(fund.index)).sort_index().ffill()
     fund_merged = fund_merged.reindex(chart_idx) 
     
     # Formel: (math.sqrt(targetValue * eps * bookValuePerShare) * (roic / price)*100)-20
+    # Nutzt nun das korrekte TTM EPS (wie im Pine Script)
     target_value = 22.5
-    inner_sqrt = target_value * fund_merged['EPS'] * fund_merged['BVPS']
+    inner_sqrt = target_value * fund_merged['EPS_TTM'] * fund_merged['BVPS']
     
     # Vermeide Fehler durch negative Wurzeln
     sqrt_val = np.where(inner_sqrt >= 0, np.sqrt(np.maximum(inner_sqrt, 0)), np.nan)
     
     rp2 = (sqrt_val * (fund_merged['ROIC'] / df_chart['Close']) * 100) - 20
     return rp2
-
 
 # --- HAUPT-LAYOUT (TABS) ---
 tab1, tab2, tab3 = st.tabs(["🔍 Einzel-Analyse", "🎯 Screener", "📈 Kursverlauf"])
