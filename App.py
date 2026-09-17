@@ -5,15 +5,29 @@ import numpy as np
 import warnings
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import base64
+import os
 
 warnings.filterwarnings('ignore')
 
 st.set_page_config(page_title="RP2 Analysis", page_icon="📈", layout="wide")
 
-# App Header / Logo styling
-st.markdown("""
-    <div style='display: flex; align-items: center; gap: 15px; margin-bottom: 20px;'>
-        <div style='background: linear-gradient(135deg, #26a69a 0%, #00796b 100%); padding: 12px; border-radius: 12px; color: white; font-size: 28px;'>📈</div>
+# ==========================================
+# APP HEADER & LOGO
+# ==========================================
+logo_path = "logo.jpg"
+if os.path.exists(logo_path):
+    # Bild in Base64 umwandeln, damit es in HTML dargestellt werden kann
+    with open(logo_path, "rb") as image_file:
+        encoded_string = base64.b64encode(image_file.read()).decode()
+    logo_html = f"<img src='data:image/jpeg;base64,{encoded_string}' style='width: 90px; border-radius: 12px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);'>"
+else:
+    # Fallback, falls das Bild noch nicht hochgeladen wurde
+    logo_html = "<div style='background: linear-gradient(135deg, #26a69a 0%, #00796b 100%); padding: 12px; border-radius: 12px; color: white; font-size: 28px;'>📈</div>"
+
+st.markdown(f"""
+    <div style='display: flex; align-items: center; gap: 20px; margin-bottom: 20px;'>
+        {logo_html}
         <div>
             <h1 style='margin: 0; font-size: 32px;'>RP2 Analysis</h1>
             <p style='margin: 0; color: gray; font-size: 14px;'>Professional Fundamental & Valuation Suite</p>
@@ -21,6 +35,9 @@ st.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
+# ==========================================
+# DATEN LADE FUNKTIONEN
+# ==========================================
 @st.cache_data(ttl=3600)  
 def load_stock_data(ticker_symbol):
     try:
@@ -83,18 +100,20 @@ def load_screener_data():
     data_list = []
     for t in tickers:
         try:
-            stock = yf.Ticker(t)
-            info = stock.info
+            data = load_stock_data(t)
+            if not data or not data['info']:
+                continue
+            
+            info = data['info']
             if 'marketCap' not in info or info['marketCap'] is None:
                 continue
                
-            # Quick estimation or extraction for screener
             roe = info.get("returnOnEquity", 0) * 100 if info.get("returnOnEquity") else np.nan
             marge = info.get("operatingMargins", 0) * 100 if info.get("operatingMargins") else np.nan
             kgv = info.get("trailingPE", np.nan)
             
-            # Approximate RP2 for screening if possible, or fallback to ROE/Margin proxy
-            approx_rp2 = (roe * 0.8) - 10 if pd.notna(roe) else np.nan
+            # Echten RP2 Score berechnen anstatt Schätzung
+            rp2_score = calc_latest_rp2(data)
                 
             data_list.append({
                 "Ticker": t,
@@ -105,7 +124,7 @@ def load_screener_data():
                 "KBV": info.get("priceToBook", np.nan),
                 "Marge (%)": marge,
                 "ROE (%)": roe,
-                "RP2 Power (%)": approx_rp2,
+                "RP2 Power (%)": rp2_score,
                 "Div. Rendite (%)": info.get("dividendYield", 0) * 100 if info.get("dividendYield") else 0
             })
         except:
@@ -114,6 +133,9 @@ def load_screener_data():
     df = pd.DataFrame(data_list)
     return df
 
+# ==========================================
+# INDIKATOREN & BERECHNUNGEN
+# ==========================================
 def calc_sma(series, period):
     return series.rolling(window=period).mean()
 
@@ -130,6 +152,12 @@ def calc_latest_rp2(data):
         bilanz_q = data['bilanz_q'].T
         info = data['info']
         price = info.get('currentPrice', info.get('regularMarketPrice', info.get('previousClose', 1)))
+        
+        # Sicherstellen, dass die Daten chronologisch aufsteigend sind (älteste zuerst, neueste zuletzt)
+        guv_q.index = pd.to_datetime(guv_q.index)
+        bilanz_q.index = pd.to_datetime(bilanz_q.index)
+        guv_q = guv_q.sort_index()
+        bilanz_q = bilanz_q.sort_index()
         
         net_income_q = guv_q['Net Income'].dropna() if 'Net Income' in guv_q.columns else guv_q['Net Income Common Stockholders'].dropna()
         ebit_q = guv_q['EBIT'].dropna() if 'EBIT' in guv_q.columns else guv_q['Operating Income'].dropna()
@@ -668,6 +696,7 @@ def calc_rp2_intrinsic(df_chart, ticker_symbol, params):
         'Val_PSH': val_psh,
         'Val_PSTOT': val_pstot
     }, index=df_chart.index)
+
 def calc_greenwald_valuation(df_chart, ticker_symbol, params):
     data = load_stock_data(ticker_symbol)
     if not data or data['guv_q'] is None or data['bilanz_q'] is None:
@@ -682,7 +711,8 @@ def calc_greenwald_valuation(df_chart, ticker_symbol, params):
     guv_q = guv_q.sort_index()
     bilanz_q = bilanz_q.sort_index()
     
-    fund = pd.DataFrame(index=bilanz_q.index.union(guv_q.index)).sort_index()
+    common_index = bilanz_q.index.union(guv_q.index).sort_values()
+    fund = pd.DataFrame(index=common_index)
     
     def get_val(df, keys):
         for k in keys:
@@ -920,6 +950,9 @@ def render_statement(title, df_annual, df_quarterly, key_prefix):
             )
             st.plotly_chart(fig, use_container_width=True)
 
+# ==========================================
+# UI TABS & LAYOUT
+# ==========================================
 tab1, tab2, tab3 = st.tabs(["🔍 Einzel-Analyse", "🎯 Screener", "📈 Kursverlauf"])
 
 with tab1:
@@ -939,7 +972,6 @@ with tab1:
             roic = data['calc_roic'] * 100 if not np.isnan(data['calc_roic']) else np.nan
             roc = data['calc_roc'] * 100 if not np.isnan(data['calc_roc']) else np.nan
             
-            # Calculate RP2 Power Score
             latest_rp2_score = calc_latest_rp2(data)
             
             col1, col2, col3 = st.columns(3)
@@ -1019,10 +1051,10 @@ with tab2:
             
         mask = (
             (screener_df['Land'].isin(gewaehlte_laender)) &
-            (screener_df['M.Cap (Mrd $)'] >= min_mcap) &
-            (screener_df['KGV'] <= max_kgv) &
-            (screener_df['KBV'] <= max_kbv) &
-            (screener_df['RP2 Power (%)'] >= min_rp2)
+            (screener_df['M.Cap (Mrd $)'].fillna(0) >= min_mcap) &
+            (screener_df['KGV'].fillna(9999) <= max_kgv) &
+            (screener_df['KBV'].fillna(9999) <= max_kbv) &
+            (screener_df['RP2 Power (%)'].fillna(-9999) >= min_rp2)
         )
         gefiltert = screener_df[mask].reset_index(drop=True)
         
@@ -1135,17 +1167,18 @@ with tab3:
                     if "SMA 200" in overlay_ind:
                         fig.add_trace(go.Scatter(x=df_chart.index, y=calc_sma(df_chart['Close'], 200), line=dict(color='orange', width=2), name="SMA 200"), row=1, col=1)
                         
-                    if "RP2 Intrinsic Value" in overlay_ind or "Liquiditätswert pro Aktie" in overlay_ind:
+                    if "RP2 Intrinsic Value" in overlay_ind:
                         df_iv = calc_rp2_intrinsic(df_chart, ticker_input_chart, rp2iv_params)
                         if not df_iv.empty:
-                            if "RP2 Intrinsic Value" in overlay_ind:
-                                fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['IntrinsicValue'], line=dict(color='blue', width=2), name="Intrinsischer Wert"), row=1, col=1)
-                                fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['CurrentIntrinsic'], line=dict(color='gold', width=2), name="Intrinsisch (ohne Wachstum)"), row=1, col=1)
+                            fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['IntrinsicValue'], line=dict(color='blue', width=2), name="Intrinsischer Wert"), row=1, col=1)
+                            fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['CurrentIntrinsic'], line=dict(color='gold', width=2), name="Intrinsisch (ohne Wachstum)"), row=1, col=1)
                                 
-                            if "Liquiditätswert pro Aktie" in overlay_ind:
-                                fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['Val_PS'], line=dict(color='gray', width=2), name="Konservative Vermögenssumme"), row=1, col=1)
-                                fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['Val_PSH'], line=dict(color='darkgray', width=2), name="Obere Vermögenssumme"), row=1, col=1)
-                                fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['Val_PSTOT'], line=dict(color='lightblue', width=2), name="Summe mit allen Verb."), row=1, col=1)
+                    if "Liquiditätswert pro Aktie" in overlay_ind:
+                        df_iv = calc_rp2_intrinsic(df_chart, ticker_input_chart, rp2iv_params)
+                        if not df_iv.empty:
+                            fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['Val_PS'], line=dict(color='gray', width=2), name="Konservative Vermögenssumme"), row=1, col=1)
+                            fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['Val_PSH'], line=dict(color='darkgray', width=2), name="Obere Vermögenssumme"), row=1, col=1)
+                            fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['Val_PSTOT'], line=dict(color='lightblue', width=2), name="Summe mit allen Verb."), row=1, col=1)
                     
                     if "Greenwald Valuation" in overlay_ind:
                         df_gw = calc_greenwald_valuation(df_chart, ticker_input_chart, greenwald_params)
