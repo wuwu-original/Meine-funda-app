@@ -15,7 +15,7 @@ st.set_page_config(page_title="RP2 Analysis", page_icon="📈", layout="wide")
 # ==========================================
 # APP HEADER & LOGO
 # ==========================================
-logo_path = "logo.jpg"
+logo_path = "logo.jpeg"
 if os.path.exists(logo_path):
     # Bild in Base64 umwandeln, damit es in HTML dargestellt werden kann
     with open(logo_path, "rb") as image_file:
