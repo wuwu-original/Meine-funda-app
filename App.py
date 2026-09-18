@@ -34,20 +34,25 @@ custom_css = """
     100% { background-position: 800px 800px, -500px 500px; }
 }
 
-/* Macht den Haupt-Container leicht transparent mit Glassmorphism-Effekt */
+/* Den Hintergrund der Streamlit-Ansicht explizit transparent machen */
+[data-testid="stAppViewContainer"] {
+    background-color: transparent !important;
+}
+
+/* Macht den Haupt-Container transparent, damit das Netz zwischen den Zahlen sichtbar wird */
 .block-container {
-    background-color: rgba(14, 17, 23, 0.88) !important;
+    background-color: rgba(14, 17, 23, 0.15) !important; /* Deutlich durchsichtiger (15% statt 88%) */
     border-radius: 12px;
     padding: 2rem !important;
     box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
-    backdrop-filter: blur(5px);
+    backdrop-filter: blur(1px); /* Sehr wenig Blur, damit die Linien scharf bleiben */
     margin-top: 1.5rem;
 }
 
-/* Den oberen Balken (Header) von Streamlit ebenfalls anpassen */
+/* Den oberen Balken (Header) von Streamlit ebenfalls transparenter machen */
 [data-testid="stHeader"] {
-    background-color: rgba(14, 17, 23, 0.7) !important;
-    backdrop-filter: blur(10px);
+    background-color: rgba(14, 17, 23, 0.3) !important;
+    backdrop-filter: blur(5px);
 }
 </style>
 """
