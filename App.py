@@ -13,6 +13,47 @@ warnings.filterwarnings('ignore')
 st.set_page_config(page_title="RP2 Analysis", page_icon="📈", layout="wide")
 
 # ==========================================
+# CUSTOM CSS & HINTERGRUND-ANIMATION
+# ==========================================
+custom_css = """
+<style>
+/* Der animierte Netzwerk-Hintergrund */
+.stApp {
+    background-color: #0b0f19 !important;
+    background-image: 
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='400' height='400'%3E%3Cg fill='%2326a69a' fill-opacity='0.4'%3E%3Ccircle cx='50' cy='50' r='2'/%3E%3Ccircle cx='200' cy='150' r='3'/%3E%3Ccircle cx='350' cy='50' r='1.5'/%3E%3Ccircle cx='100' cy='300' r='2.5'/%3E%3Ccircle cx='300' cy='350' r='2'/%3E%3Ccircle cx='400' cy='200' r='2'/%3E%3Ccircle cx='150' cy='400' r='1.5'/%3E%3Ccircle cx='0' cy='250' r='2'/%3E%3C/g%3E%3Cg stroke='%2326a69a' stroke-opacity='0.2' stroke-width='1'%3E%3Cline x1='50' y1='50' x2='200' y2='150'/%3E%3Cline x1='200' y1='150' x2='350' y2='50'/%3E%3Cline x1='50' y1='50' x2='100' y2='300'/%3E%3Cline x1='200' y1='150' x2='100' y2='300'/%3E%3Cline x1='200' y1='150' x2='300' y2='350'/%3E%3Cline x1='100' y1='300' x2='300' y2='350'/%3E%3Cline x1='350' y1='50' x2='300' y2='350'/%3E%3Cline x1='350' y1='50' x2='400' y2='200'/%3E%3Cline x1='300' y1='350' x2='400' y2='200'/%3E%3Cline x1='200' y1='150' x2='400' y2='200'/%3E%3Cline x1='100' y1='300' x2='150' y2='400'/%3E%3Cline x1='300' y1='350' x2='150' y2='400'/%3E%3Cline x1='50' y1='50' x2='0' y2='250'/%3E%3Cline x1='100' y1='300' x2='0' y2='250'/%3E%3Cline x1='200' y1='150' x2='0' y2='250'/%3E%3C/g%3E%3C/svg%3E"),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cg fill='%2342a5f5' fill-opacity='0.3'%3E%3Ccircle cx='30' cy='80' r='1.5'/%3E%3Ccircle cx='180' cy='40' r='2'/%3E%3Ccircle cx='250' cy='200' r='1'/%3E%3Ccircle cx='80' cy='250' r='2'/%3E%3Ccircle cx='300' cy='150' r='1.5'/%3E%3Ccircle cx='150' cy='300' r='1'/%3E%3C/g%3E%3Cg stroke='%2342a5f5' stroke-opacity='0.15' stroke-width='0.5'%3E%3Cline x1='30' y1='80' x2='180' y2='40'/%3E%3Cline x1='180' y1='40' x2='250' y2='200'/%3E%3Cline x1='250' y1='200' x2='80' y2='250'/%3E%3Cline x1='80' y1='250' x2='30' y2='80'/%3E%3Cline x1='180' y1='40' x2='300' y2='150'/%3E%3Cline x1='250' y1='200' x2='300' y2='150'/%3E%3Cline x1='80' y1='250' x2='150' y2='300'/%3E%3Cline x1='250' y1='200' x2='150' y2='300'/%3E%3C/g%3E%3C/svg%3E");
+    background-size: 800px 800px, 500px 500px;
+    background-position: 0 0, 0 0;
+    animation: moveNets 120s linear infinite;
+}
+
+/* Parallax-Animation der zwei Netz-Ebenen */
+@keyframes moveNets {
+    0% { background-position: 0 0, 0 0; }
+    100% { background-position: 800px 800px, -500px 500px; }
+}
+
+/* Macht den Haupt-Container leicht transparent mit Glassmorphism-Effekt */
+.block-container {
+    background-color: rgba(14, 17, 23, 0.88) !important;
+    border-radius: 12px;
+    padding: 2rem !important;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(5px);
+    margin-top: 1.5rem;
+}
+
+/* Den oberen Balken (Header) von Streamlit ebenfalls anpassen */
+[data-testid="stHeader"] {
+    background-color: rgba(14, 17, 23, 0.7) !important;
+    backdrop-filter: blur(10px);
+}
+</style>
+"""
+st.markdown(custom_css, unsafe_allow_html=True)
+
+# ==========================================
 # APP HEADER & LOGO
 # ==========================================
 # 1. Den absoluten Pfad des aktuellen Ordners ermitteln (sicher für Cloud)
