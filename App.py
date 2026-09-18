@@ -15,18 +15,33 @@ st.set_page_config(page_title="RP2 Analysis", page_icon="📈", layout="wide")
 # ==========================================
 # APP HEADER & LOGO
 # ==========================================
-logo_path = "logo.jpeg"
-if os.path.exists(logo_path):
+# 1. Den absoluten Pfad des aktuellen Ordners ermitteln (sicher für Cloud)
+base_dir = os.path.dirname(os.path.abspath(__file__))
+
+# 2. Automatisch nach der Logo-Datei suchen (egal ob jpg, jpeg oder png)
+logo_path = None
+for ext in ["jpg", "jpeg", "png"]:
+    temp_path = os.path.join(base_dir, f"logo.{ext}")
+    if os.path.exists(temp_path):
+        logo_path = temp_path
+        break
+
+if logo_path:
     # Bild in Base64 umwandeln, damit es in HTML dargestellt werden kann
     with open(logo_path, "rb") as image_file:
         encoded_string = base64.b64encode(image_file.read()).decode()
-    logo_html = f"<img src='data:image/jpeg;base64,{encoded_string}' style='width: 90px; border-radius: 12px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);'>"
+    
+    # Korrekten MIME-Type für HTML setzen
+    mime_type = "image/png" if logo_path.endswith("png") else "image/jpeg"
+    
+    # Bild rendern (mit object-fit für saubere Proportionen)
+    logo_html = f"<img src='data:{mime_type};base64,{encoded_string}' style='width: 90px; height: 90px; object-fit: contain; border-radius: 12px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);'>"
 else:
-    # Fallback, falls das Bild noch nicht hochgeladen wurde
-    logo_html = "<div style='background: linear-gradient(135deg, #26a69a 0%, #00796b 100%); padding: 12px; border-radius: 12px; color: white; font-size: 28px;'>📈</div>"
+    # Fallback, falls das Bild immer noch nicht gefunden wird
+    logo_html = "<div style='background: linear-gradient(135deg, #26a69a 0%, #00796b 100%); width: 90px; height: 90px; display: flex; align-items: center; justify-content: center; border-radius: 12px; color: white; font-size: 40px;'>📈</div>"
 
 st.markdown(f"""
-    <div style='display: flex; align-items: center; gap: 20px; margin-bottom: 20px;'>
+    <div style='display: flex; justify-content: center; align-items: center; gap: 20px; margin-bottom: 20px;'>
         {logo_html}
         <div>
             <h1 style='margin: 0; font-size: 32px;'>RP2 Analysis</h1>
@@ -1041,21 +1056,55 @@ with tab2:
         alle_laender = sorted(list(screener_df['Land'].unique()))
         gewaehlte_laender = st.multiselect("Nach Land filtern:", alle_laender, default=alle_laender)
         
-        col_f1, col_f2 = st.columns(2)
+        st.markdown("### 🎛️ Filterkriterien")
+        st.caption("Lasse ein Feld leer (keine Eingabe), wenn das Kriterium nicht gefiltert werden soll.")
+        
+        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+        
         with col_f1:
-            min_mcap = st.slider("Min. Marktkapitalisierung (Mrd $)", 0, 3000, 0)
-            max_kgv = st.slider("Maximales KGV", 0, 150, 150)
-        with col_f2:
-            min_rp2 = st.slider("Min. RP2 Power Score (%)", -50, 100, -20)
-            max_kbv = st.slider("Maximales KBV", 0, 100, 100)
+            st.markdown("**M.Cap (Mrd $)**")
+            min_mcap = st.number_input("Min M.Cap", value=None, placeholder="Kein Limit", key="mcap_min")
+            max_mcap = st.number_input("Max M.Cap", value=None, placeholder="Kein Limit", key="mcap_max")
             
-        mask = (
-            (screener_df['Land'].isin(gewaehlte_laender)) &
-            (screener_df['M.Cap (Mrd $)'].fillna(0) >= min_mcap) &
-            (screener_df['KGV'].fillna(9999) <= max_kgv) &
-            (screener_df['KBV'].fillna(9999) <= max_kbv) &
-            (screener_df['RP2 Power (%)'].fillna(-9999) >= min_rp2)
-        )
+        with col_f2:
+            st.markdown("**KGV**")
+            min_kgv = st.number_input("Min KGV", value=None, placeholder="Kein Limit", key="kgv_min")
+            max_kgv = st.number_input("Max KGV", value=None, placeholder="Kein Limit", key="kgv_max")
+            
+        with col_f3:
+            st.markdown("**KBV**")
+            min_kbv = st.number_input("Min KBV", value=None, placeholder="Kein Limit", key="kbv_min")
+            max_kbv = st.number_input("Max KBV", value=None, placeholder="Kein Limit", key="kbv_max")
+            
+        with col_f4:
+            st.markdown("**RP2 Power Score (%)**")
+            min_rp2 = st.number_input("Min RP2", value=None, placeholder="Kein Limit", key="rp2_min")
+            max_rp2 = st.number_input("Max RP2", value=None, placeholder="Kein Limit", key="rp2_max")
+            
+        # Basis-Maske: Land muss passen
+        mask = screener_df['Land'].isin(gewaehlte_laender)
+        
+        # Dynamische Filterung anwenden, wenn Felder nicht leer (None) sind
+        if min_mcap is not None:
+            mask &= (screener_df['M.Cap (Mrd $)'].fillna(-9999) >= min_mcap)
+        if max_mcap is not None:
+            mask &= (screener_df['M.Cap (Mrd $)'].fillna(999999) <= max_mcap)
+            
+        if min_kgv is not None:
+            mask &= (screener_df['KGV'].fillna(-9999) >= min_kgv)
+        if max_kgv is not None:
+            mask &= (screener_df['KGV'].fillna(999999) <= max_kgv)
+            
+        if min_kbv is not None:
+            mask &= (screener_df['KBV'].fillna(-9999) >= min_kbv)
+        if max_kbv is not None:
+            mask &= (screener_df['KBV'].fillna(999999) <= max_kbv)
+            
+        if min_rp2 is not None:
+            mask &= (screener_df['RP2 Power (%)'].fillna(-9999) >= min_rp2)
+        if max_rp2 is not None:
+            mask &= (screener_df['RP2 Power (%)'].fillna(999999) <= max_rp2)
+            
         gefiltert = screener_df[mask].reset_index(drop=True)
         
         st.write(f"**Treffer: {len(gefiltert)} Unternehmen**")
