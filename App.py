@@ -194,6 +194,65 @@ def load_screener_data():
     df = pd.DataFrame(data_list)
     return df
 
+@st.cache_data(ttl=86400) # Lädt die Liste nur 1x pro Tag (86400 Sekunden) neu
+def load_ticker_directory():
+    try:
+        # 1. S&P 500 laden
+        sp500_url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+        sp500_table = pd.read_html(sp500_url)[0]
+        sp500_df = sp500_table[['Symbol', 'Security', 'GICS Sector']].rename(
+            columns={'Symbol': 'Ticker', 'Security': 'Name', 'GICS Sector': 'Sektor'}
+        )
+        sp500_df['Index/Land'] = 'S&P 500 (USA)'
+        
+        # 2. NASDAQ 100 laden
+        ndx_url = 'https://en.wikipedia.org/wiki/Nasdaq-100'
+        ndx_tables = pd.read_html(ndx_url)
+        ndx_table = None
+        for tbl in ndx_tables:
+            if 'Ticker' in tbl.columns and 'Company' in tbl.columns:
+                ndx_table = tbl
+                break
+        
+        if ndx_table is not None:
+            if 'GICS Sector' in ndx_table.columns:
+                sector_col = 'GICS Sector'
+            elif 'Sector' in ndx_table.columns:
+                sector_col = 'Sector'
+            else:
+                sector_col = None
+                
+            if sector_col:
+                ndx_df = ndx_table[['Ticker', 'Company', sector_col]].rename(
+                    columns={'Company': 'Name', sector_col: 'Sektor'}
+                )
+            else:
+                ndx_df = ndx_table[['Ticker', 'Company']].rename(columns={'Company': 'Name'})
+                ndx_df['Sektor'] = 'N/A'
+                
+            ndx_df['Index/Land'] = 'NASDAQ 100 (USA)'
+        else:
+            ndx_df = pd.DataFrame(columns=['Ticker', 'Name', 'Sektor', 'Index/Land'])
+            
+        # 3. DAX 40 laden
+        dax_url = 'https://de.wikipedia.org/wiki/DAX'
+        dax_table = pd.read_html(dax_url, match='Symbol')[0]
+        dax_df = dax_table[['Symbol', 'Name', 'Branche']].rename(
+            columns={'Symbol': 'Ticker', 'Branche': 'Sektor'}
+        )
+        # Suffix '.DE' anhängen, damit Yahoo Finance die deutschen Aktien erkennt
+        dax_df['Ticker'] = dax_df['Ticker'].astype(str) + '.DE'
+        dax_df['Index/Land'] = 'DAX 40 (GER)'
+        
+        # 4. Alles zusammenführen und Duplikate entfernen (falls z.B. Apple in Nasdaq und S&P500 gelistet ist)
+        combined_df = pd.concat([sp500_df, ndx_df, dax_df], ignore_index=True)
+        combined_df = combined_df.drop_duplicates(subset=['Ticker']).reset_index(drop=True)
+        
+        return combined_df
+        
+    except Exception as e:
+        return pd.DataFrame()
+
 # ==========================================
 # INDIKATOREN & BERECHNUNGEN
 # ==========================================
