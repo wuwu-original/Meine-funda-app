@@ -1014,7 +1014,7 @@ def render_statement(title, df_annual, df_quarterly, key_prefix):
 # ==========================================
 # UI TABS & LAYOUT
 # ==========================================
-tab1, tab2, tab3 = st.tabs(["🔍 Einzel-Analyse", "🎯 Screener", "📈 Kursverlauf"])
+tab1, tab2, tab3, tab4 = st.tabs(["🔍 Einzel-Analyse", "🎯 Screener", "📈 Kursverlauf", "📚 Ticker-Suche"])
 
 with tab1:
     st.header("Aktie analysieren")
@@ -1366,3 +1366,51 @@ with tab3:
                     st.error("Keine historischen Kursdaten gefunden.")
             except Exception as e:
                 st.error(f"Fehler beim Abrufen der Kursdaten: {e}")
+
+with tab4:
+    st.header("Aktien & Ticker Verzeichnis")
+    st.write("Suche nach Unternehmensnamen oder filtere nach Branchen, um das passende Ticker-Symbol für die Analyse zu finden. (Beinhaltet S&P 500, NASDAQ 100 und DAX 40)")
+    
+    with st.spinner("Lade globales Ticker-Verzeichnis (via Wikipedia)..."):
+        df_tickers = load_ticker_directory()
+        
+    if not df_tickers.empty:
+        col_search1, col_search2, col_search3 = st.columns([2, 1, 1])
+        
+        with col_search1:
+            search_term = st.text_input("🔍 Nach Name oder Ticker suchen (z.B. SAP, Apple, Microsoft):")
+            
+        with col_search2:
+            all_sectors = sorted(df_tickers['Sektor'].dropna().unique().tolist())
+            selected_sectors = st.multiselect("Nach Branche filtern:", all_sectors)
+            
+        with col_search3:
+            all_indices = sorted(df_tickers['Index/Land'].dropna().unique().tolist())
+            selected_indices = st.multiselect("Nach Index filtern:", all_indices)
+            
+        # Dynamische Filterung
+        mask = pd.Series(True, index=df_tickers.index)
+        
+        if search_term:
+            # Sucht im Namen ODER im Ticker, egal ob groß oder klein geschrieben
+            mask &= (df_tickers['Name'].str.contains(search_term, case=False, na=False) | 
+                     df_tickers['Ticker'].str.contains(search_term, case=False, na=False))
+                     
+        if selected_sectors:
+            mask &= df_tickers['Sektor'].isin(selected_sectors)
+            
+        if selected_indices:
+            mask &= df_tickers['Index/Land'].isin(selected_indices)
+            
+        filtered_tickers = df_tickers[mask].reset_index(drop=True)
+        
+        st.write(f"**Treffer: {len(filtered_tickers)} Unternehmen gefunden**")
+        st.dataframe(
+            filtered_tickers, 
+            use_container_width=True,
+            column_config={
+                "Ticker": st.column_config.TextColumn("Ticker (Kopieren für Tab 1)"),
+            }
+        )
+    else:
+        st.warning("Das Verzeichnis konnte aktuell nicht geladen werden. Möglicherweise hat sich die Wikipedia-Tabelle geändert.")
