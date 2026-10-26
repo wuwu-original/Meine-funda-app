@@ -64,7 +64,6 @@ st.markdown(custom_css, unsafe_allow_html=True)
 base_dir = os.path.dirname(os.path.abspath(__file__))
 
 logo_path = None
-# Prüfe auf gängige Bildformate (jpg, jpeg, png)
 for ext in ["jpg", "jpeg", "png"]:
     temp_path = os.path.join(base_dir, f"logo.{ext}")
     if os.path.exists(temp_path):
@@ -72,17 +71,14 @@ for ext in ["jpg", "jpeg", "png"]:
         break
 
 if logo_path:
-    # Lade und codiere das Bild in Base64
     with open(logo_path, "rb") as image_file:
         encoded_string = base64.b64encode(image_file.read()).decode()
     
     mime_type = "image/png" if logo_path.endswith("png") else "image/jpeg"
     logo_html = f"<img src='data:{mime_type};base64,{encoded_string}' style='width: 90px; height: 90px; object-fit: contain; border-radius: 12px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);'>"
 else:
-    # Fallback-Design, falls das Bild (noch) nicht gefunden wird
     logo_html = "<div style='background: linear-gradient(135deg, #26a69a 0%, #00796b 100%); width: 90px; height: 90px; display: flex; align-items: center; justify-content: center; border-radius: 12px; color: white; font-size: 40px;'>📈</div>"
 
-# Zentrierter Header
 st.markdown(f"""
     <div style='display: flex; justify-content: center; align-items: center; gap: 20px; margin-bottom: 20px;'>
         {logo_html}
@@ -143,7 +139,7 @@ def load_stock_data(ticker_symbol):
             "calc_roc": roc,
             "calc_roic": roic
         }
-    except Exception as e:
+    except Exception:
         return None
 
 @st.cache_data(ttl=3600)
@@ -184,7 +180,7 @@ def load_screener_data():
                 "RP2 Power (%)": rp2_score,
                 "Div. Rendite (%)": info.get("dividendYield", 0) * 100 if info.get("dividendYield") else 0
             })
-        except:
+        except Exception:
             continue
             
     df = pd.DataFrame(data_list)
@@ -236,7 +232,7 @@ def calc_latest_rp2(data):
         sqrt_val = np.sqrt(max(inner_sqrt, 0)) if inner_sqrt >= 0 else 0
         rp2 = (sqrt_val * (roic / price) * 100) - 20
         return rp2
-    except:
+    except Exception:
         return np.nan
 
 def calc_rp2_indicator(df_chart, ticker_symbol):
@@ -283,7 +279,7 @@ def calc_rp2_indicator(df_chart, ticker_symbol):
     try:
         chart_idx = df_chart.index.tz_localize(None)
         fund.index = fund.index.tz_localize(None)
-    except:
+    except Exception:
         chart_idx = df_chart.index
         
     fund_merged = fund.reindex(chart_idx.union(fund.index)).sort_index().ffill()
@@ -344,7 +340,7 @@ def calc_rp2_cf_indicator(df_chart, ticker_symbol):
     try:
         chart_idx = df_chart.index.tz_localize(None)
         fund.index = fund.index.tz_localize(None)
-    except:
+    except Exception:
         chart_idx = df_chart.index
         
     fund_merged = fund.reindex(chart_idx.union(fund.index)).sort_index().ffill()
@@ -406,7 +402,7 @@ def calc_rp2_peg_indicator(df_chart, ticker_symbol):
     try:
         chart_idx = df_chart.index.tz_localize(None)
         fund.index = fund.index.tz_localize(None)
-    except:
+    except Exception:
         chart_idx = df_chart.index
         
     fund_merged = fund.reindex(chart_idx.union(fund.index)).sort_index().ffill()
@@ -447,7 +443,7 @@ def calc_rp2_pe_indicator(df_chart, ticker_symbol):
     try:
         chart_idx = df_chart.index.tz_localize(None)
         eps_ttm.index = eps_ttm.index.tz_localize(None)
-    except:
+    except Exception:
         chart_idx = df_chart.index
 
     eps_merged = eps_ttm.reindex(chart_idx.union(eps_ttm.index)).sort_index().ffill()
@@ -507,7 +503,7 @@ def calc_rp2_ev_ebitda_indicator(df_chart, ticker_symbol):
         shares_q.index = shares_q.index.tz_localize(None)
         total_debt_q.index = total_debt_q.index.tz_localize(None)
         cash_q.index = cash_q.index.tz_localize(None)
-    except:
+    except Exception:
         chart_idx = df_chart.index
 
     ebitda_merged = ebitda_ttm.reindex(chart_idx.union(ebitda_ttm.index)).sort_index().ffill().reindex(chart_idx)
@@ -569,7 +565,7 @@ def calc_rp2_ev_sales_indicator(df_chart, ticker_symbol):
         shares_q.index = shares_q.index.tz_localize(None)
         total_debt_q.index = total_debt_q.index.tz_localize(None)
         cash_q.index = cash_q.index.tz_localize(None)
-    except:
+    except Exception:
         chart_idx = df_chart.index
 
     revenue_merged = revenue_ttm.reindex(chart_idx.union(revenue_ttm.index)).sort_index().ffill().reindex(chart_idx)
@@ -631,7 +627,7 @@ def calc_rp2_p_fcf_indicator(df_chart, ticker_symbol):
         chart_idx = df_chart.index.tz_localize(None)
         fcf_ttm.index = fcf_ttm.index.tz_localize(None)
         shares_q.index = shares_q.index.tz_localize(None)
-    except:
+    except Exception:
         chart_idx = df_chart.index
 
     fcf_merged = fcf_ttm.reindex(chart_idx.union(fcf_ttm.index)).sort_index().ffill().reindex(chart_idx)
@@ -720,7 +716,7 @@ def calc_rp2_intrinsic(df_chart, ticker_symbol, params):
     try:
         chart_idx = df_chart.index.tz_localize(None)
         fund.index = fund.index.tz_localize(None)
-    except:
+    except Exception:
         chart_idx = df_chart.index
         
     fund_merged = fund.reindex(chart_idx.union(fund.index)).sort_index().ffill()
@@ -813,13 +809,13 @@ def calc_greenwald_valuation(df_chart, ticker_symbol, params):
     else:
         shares_aligned = shares_q.reindex(fund.index).ffill()
     
-    adj_cash = cash * params['cash_factor']
-    adj_recv = receivables * params['recv_factor']
-    adj_inv = inventory * params['inv_factor']
-    adj_ppe = ppe_net * params['ppe_factor']
+    adj_cash = cash * params.get('cash_factor', 1.0)
+    adj_recv = receivables * params.get('recv_factor', 0.98)
+    adj_inv = inventory * params.get('inv_factor', 1.0)
+    adj_ppe = ppe_net * params.get('ppe_factor', 1.2)
     
-    add_rnd = (rnd_ttm * params['rnd_years']) if params['use_intangibles'] else pd.Series(0, index=fund.index)
-    add_sga = (sga_ttm * params['sga_years']) if params['use_intangibles'] else pd.Series(0, index=fund.index)
+    add_rnd = (rnd_ttm * params.get('rnd_years', 2.0)) if params.get('use_intangibles', True) else pd.Series(0, index=fund.index)
+    add_sga = (sga_ttm * params.get('sga_years', 1.0)) if params.get('use_intangibles', True) else pd.Series(0, index=fund.index)
     
     total_reproduction_assets = adj_cash + adj_recv + adj_inv + adj_ppe + add_rnd + add_sga
     av_total = total_reproduction_assets - total_liabilities
@@ -830,7 +826,7 @@ def calc_greenwald_valuation(df_chart, ticker_symbol, params):
     final_tax_rate = np.clip(eff_tax_rate, 0.0, 0.40) 
     
     nopat = ebit_ttm * (1 - final_tax_rate)
-    epv_total = nopat / params['wacc']
+    epv_total = nopat / params.get('wacc', 0.10)
     epv_per_share = np.where(shares_aligned > 0, epv_total / shares_aligned, np.nan)
     
     fund['AV_PS'] = av_per_share
@@ -839,13 +835,13 @@ def calc_greenwald_valuation(df_chart, ticker_symbol, params):
     try:
         chart_idx = df_chart.index.tz_localize(None)
         fund.index = fund.index.tz_localize(None)
-    except:
+    except Exception:
         chart_idx = df_chart.index
         
     fund_merged = fund.reindex(chart_idx.union(fund.index)).sort_index().ffill()
     fund_merged = fund_merged.reindex(chart_idx) 
     
-    buy_price = fund_merged['EPV_PS'] * (1 - params['margin_safety'])
+    buy_price = fund_merged['EPV_PS'] * (1 - params.get('margin_safety', 0.33))
     franchise_value = (fund_merged['EPV_PS'] / fund_merged['AV_PS']) - 1
     
     return pd.DataFrame({
@@ -868,7 +864,7 @@ def format_large_number(x):
             return f"{val / 1e3:.2f} K"
         else:
             return f"{val:.2f}"
-    except:
+    except Exception:
         return x
 
 def calculate_historical_stats(guv, bilanz):
@@ -962,7 +958,6 @@ def render_statement(title, df_annual, df_quarterly, key_prefix):
             val = view_df.loc[idx, col]
             val_str = format_large_number(val)
             
-            # Vergleiche mit Vorperiode (Spalte weiter rechts, da Yahoo meist neu -> alt sortiert)
             if i + 1 < len(cols):
                 prev_val = view_df.loc[idx, cols[i+1]]
                 if pd.notna(val) and pd.notna(prev_val) and prev_val != 0:
@@ -1035,7 +1030,13 @@ if global_ticker:
         if not global_data:
             st.error(f"Konnte keine Daten für {global_ticker} finden.")
 
-tab1, tab2, tab3, tab4 = st.tabs(["🔍 Einzel-Analyse", "🎯 Screener", "📈 Kursverlauf", "🧮 Bewertungsrechner"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "🔍 Einzel-Analyse", 
+    "🎯 Screener", 
+    "📈 Kursverlauf & Indikatoren", 
+    "🏛️ Greenwald Valuation", 
+    "🧮 Bewertungsrechner"
+])
 
 with tab1:
     st.header("Aktie analysieren")
@@ -1088,17 +1089,14 @@ with tab1:
                         val = view_stats.loc[idx, col]
                         val_str = f"{val:.2f}" if pd.notna(val) else "N/A"
                         
-                        # Vergleiche mit Vorperiode
                         if i + 1 < len(cols):
                             prev_val = view_stats.loc[idx, cols[i+1]]
                             if pd.notna(val) and pd.notna(prev_val) and prev_val != 0:
                                 if "(%)" in str(idx):
-                                    # Margen/ROE: absolute Veränderung in Prozentpunkten (pp)
                                     diff = val - prev_val
                                     sign = "+" if diff > 0 else ""
                                     val_str = f"{val_str} ({sign}{diff:.1f} pp)"
                                 else:
-                                    # Ratios (wie Current Ratio): prozentuales Wachstum
                                     growth = ((val - prev_val) / abs(prev_val)) * 100
                                     sign = "+" if growth > 0 else ""
                                     val_str = f"{val_str} ({sign}{growth:.1f}%)"
@@ -1228,7 +1226,11 @@ with tab3:
         'w_recvh': 0.90, 'w_invh': 0.75, 'w_ppeh': 0.50, 'normalizePS': True
     }
     
-    greenwald_params = {}
+    greenwald_params = {
+        'cash_factor': 1.0, 'recv_factor': 0.98, 'inv_factor': 1.0, 'ppe_factor': 1.2,
+        'use_intangibles': True, 'rnd_years': 2.0, 'sga_years': 1.0,
+        'wacc': 0.10, 'margin_safety': 0.33
+    }
     
     needs_params = "RP2 Intrinsic Value" in overlay_ind or "Liquiditätswert pro Aktie" in overlay_ind or "Greenwald Valuation" in overlay_ind
     
@@ -1412,6 +1414,56 @@ with tab3:
                 st.error(f"Fehler beim Abrufen der Kursdaten: {e}")
 
 with tab4:
+    st.header("🏛️ Greenwald Valuation Framework")
+    st.markdown("""
+    **Earnings Power Value (EPV) vs. Asset Value (AV)** von Bruce Greenwald (Columbia University).
+    Dieses Modell analysiert die wirkliche Ertragskraft ohne unzuverlässige langfristige Wachstumsprognosen.
+    """)
+    
+    if global_ticker and global_data and global_data['info']:
+        try:
+            df_dummy = yf.download(global_ticker, period="1y", interval="1wk", progress=False)
+            if isinstance(df_dummy.columns, pd.MultiIndex):
+                df_dummy.columns = df_dummy.columns.droplevel(1)
+            
+            df_gw_live = calc_greenwald_valuation(df_dummy, global_ticker, greenwald_params)
+            
+            if not df_gw_live.empty:
+                latest_av = df_gw_live['AV_PS'].dropna().iloc[-1] if not df_gw_live['AV_PS'].dropna().empty else 0
+                latest_epv = df_gw_live['EPV_PS'].dropna().iloc[-1] if not df_gw_live['EPV_PS'].dropna().empty else 0
+                latest_buy = df_gw_live['Buy_Price'].dropna().iloc[-1] if not df_gw_live['Buy_Price'].dropna().empty else 0
+                latest_moat = df_gw_live['Franchise_Value'].dropna().iloc[-1] if not df_gw_live['Franchise_Value'].dropna().empty else 0
+                
+                cur_price = df_dummy['Close'].iloc[-1]
+                
+                st.markdown("### Aktuelle Greenwald Kennzahlen")
+                gw_col1, gw_col2, gw_col3, gw_col4 = st.columns(4)
+                gw_col1.metric("Asset Value (AV) / Aktie", f"${latest_av:.2f}")
+                gw_col2.metric("Earnings Power Value (EPV)", f"${latest_epv:.2f}")
+                gw_col3.metric("Kaufpreis inkl. MoS", f"${latest_buy:.2f}")
+                gw_col4.metric("Franchise Value (Moat)", f"{latest_moat*100:.1f}%", 
+                               delta="Wettbewerbsvorteil (Moat)" if latest_moat > 0 else "Kein Moat",
+                               delta_color="normal" if latest_moat > 0 else "inverse")
+                
+                st.markdown("---")
+                st.markdown("### Interpretation & Strategie")
+                if latest_epv > latest_av:
+                    st.success(f"**Starker Wettbewerbsvorteil (Burggraben):** Der EPV (${latest_epv:.2f}) liegt deutlich über dem Asset Value (${latest_av:.2f}). Das Unternehmen verdient mehr als seine reine Substanz vermuten lässt.")
+                else:
+                    st.warning(f"**Kein signifikanter Burggraben:** Der EPV (${latest_epv:.2f}) liegt unter oder nahe am Asset Value (${latest_av:.2f}). Es findet keine nennenswerte Überrendite statt.")
+                    
+                if cur_price <= latest_buy:
+                    st.info(f"**Kaufgelegenheit nach Margin of Safety:** Der Kurs (${cur_price:.2f}) handelt unter dem Zielkaufpreis von ${latest_buy:.2f}.")
+                else:
+                    st.write(f"Der aktuelle Kurs (${cur_price:.2f}) liegt über dem konservativen Einstiegspreis (${latest_buy:.2f}).")
+            else:
+                st.warning("Nicht genügend Bilanzdaten für die Greenwald-Analyse vorhanden.")
+        except Exception as e:
+            st.error(f"Fehler bei Greenwald Berechnung: {e}")
+    else:
+        st.info("Bitte gib oben einen Ticker ein, um die Greenwald-Bewertung zu berechnen.")
+
+with tab5:
     st.header("🧮 Bewertungsrechner (Valuation Hub)")
     st.write("Berechne den fairen Wert (Intrinsic Value) eines Unternehmens mit verschiedenen finanzmathematischen Modellen.")
     
@@ -1427,10 +1479,9 @@ with tab4:
             try:
                 if pd.isna(val): return fallback
                 return float(val) if val is not None else fallback
-            except:
+            except Exception:
                 return fallback
 
-        # 1. PREIS
         price_val = info.get("currentPrice")
         if price_val is None or pd.isna(price_val):
             price_val = info.get("previousClose")
@@ -1442,11 +1493,10 @@ with tab4:
                 if not temp_hist.empty:
                     val = temp_hist['Close'].iloc[-1]
                     price_val = float(val.iloc[0]) if isinstance(val, pd.Series) else float(val)
-            except:
+            except Exception:
                 pass
         defaults["price"] = safe_float(price_val, 100.0)
         
-        # 2. SHARES (Aktienanzahl)
         guv_q = global_data['guv_q']
         shares_val = info.get("sharesOutstanding", 1.0)
         if guv_q is not None and not guv_q.empty:
@@ -1455,7 +1505,6 @@ with tab4:
                 shares_val = guv_q_t['Basic Average Shares'].dropna().iloc[0]
         defaults["shares"] = safe_float(shares_val / 1e6, 1.0) 
         
-        # 3. EPS (Gewinn pro Aktie)
         eps_val = info.get("trailingEPS")
         if eps_val is None or pd.isna(eps_val):
             if guv_q is not None and not guv_q.empty:
@@ -1470,10 +1519,8 @@ with tab4:
                     eps_val = net_income / shares_val
         defaults["eps"] = safe_float(eps_val, 5.0)
         
-        # 4. DIVIDENDE
         defaults["div_rate"] = safe_float(info.get("dividendRate"), 0.0)
         
-        # 5. FCF (Free Cash Flow)
         cf = global_data['cashflow_q']
         fcf_val = info.get("freeCashflow", 0)
         if cf is not None and not cf.empty:
@@ -1486,7 +1533,6 @@ with tab4:
                 fcf_val = ocf - abs(capex)
         defaults["fcf"] = safe_float(fcf_val / 1e6, 100.0) if fcf_val else 100.0
         
-        # 6. NETTO-SCHULDEN
         bs = global_data['bilanz_q']
         total_debt = info.get("totalDebt", 0)
         cash = info.get("totalCash", 0)
@@ -1508,7 +1554,6 @@ with tab4:
     
     sub_dcf, sub_graham, sub_ddm = st.tabs(["📊 DCF (Discounted Cash Flow)", "🏛️ Graham Formel", "💸 Dividend Discount Model"])
     
-    # MODELL 1: DCF
     with sub_dcf:
         st.markdown("### Discounted Cash Flow Modell (10 Jahre)")
         st.write("Berechnet den Barwert aller zukünftigen Cashflows. Ideal für Unternehmen mit stabilen, vorhersehbaren Zahlungsströmen.")
@@ -1556,7 +1601,6 @@ with tab4:
                 res2.metric("Aktueller Kurs", f"${dcf_price:.2f}")
                 res3.metric("Margin of Safety", f"{margin_of_safety:.1f}%", delta="Unterbewertet" if margin_of_safety > 0 else "Überbewertet", delta_color="normal" if margin_of_safety > 0 else "inverse")
 
-    # MODELL 2: GRAHAM FORMEL
     with sub_graham:
         st.markdown("### Benjamin Graham Formel")
         st.write("Die modifizierte Formel von Benjamin Graham: `V = (EPS * (8.5 + 2g) * 4.4) / Y`")
@@ -1582,7 +1626,6 @@ with tab4:
                 rg2.metric("Aktueller Kurs", f"${graham_price:.2f}")
                 rg3.metric("Margin of Safety", f"{mos_graham:.1f}%", delta="Unterbewertet" if mos_graham > 0 else "Überbewertet", delta_color="normal" if mos_graham > 0 else "inverse")
 
-    # MODELL 3: DDM
     with sub_ddm:
         st.markdown("### Dividend Discount Model (Gordon Growth)")
         st.write("Bewertet eine Aktie basierend auf dem Barwert ihrer zukünftigen, stetig wachsenden Dividenden. Nur für Dividendenaktien geeignet.")
