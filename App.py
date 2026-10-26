@@ -39,13 +39,13 @@ custom_css = """
     background-color: transparent !important;
 }
 
-/* Macht den Haupt-Container transparent, damit das Netz zwischen den Zahlen sichtbar wird */
+/* Macht den Haupt-Container transparenter, damit das Netz zwischen den Zahlen sichtbar wird */
 .block-container {
-    background-color: rgba(14, 17, 23, 0.15) !important;
+    background-color: rgba(14, 17, 23, 0.15) !important; 
     border-radius: 12px;
     padding: 2rem !important;
     box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
-    backdrop-filter: blur(1px);
+    backdrop-filter: blur(1px); 
     margin-top: 1.5rem;
 }
 
@@ -64,6 +64,7 @@ st.markdown(custom_css, unsafe_allow_html=True)
 base_dir = os.path.dirname(os.path.abspath(__file__))
 
 logo_path = None
+# Prüfe auf gängige Bildformate (jpg, jpeg, png)
 for ext in ["jpg", "jpeg", "png"]:
     temp_path = os.path.join(base_dir, f"logo.{ext}")
     if os.path.exists(temp_path):
@@ -71,14 +72,17 @@ for ext in ["jpg", "jpeg", "png"]:
         break
 
 if logo_path:
+    # Lade und codiere das Bild in Base64
     with open(logo_path, "rb") as image_file:
         encoded_string = base64.b64encode(image_file.read()).decode()
     
     mime_type = "image/png" if logo_path.endswith("png") else "image/jpeg"
     logo_html = f"<img src='data:{mime_type};base64,{encoded_string}' style='width: 90px; height: 90px; object-fit: contain; border-radius: 12px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);'>"
 else:
+    # Fallback-Design, falls das Bild (noch) nicht gefunden wird
     logo_html = "<div style='background: linear-gradient(135deg, #26a69a 0%, #00796b 100%); width: 90px; height: 90px; display: flex; align-items: center; justify-content: center; border-radius: 12px; color: white; font-size: 40px;'>📈</div>"
 
+# Zentrierter Header
 st.markdown(f"""
     <div style='display: flex; justify-content: center; align-items: center; gap: 20px; margin-bottom: 20px;'>
         {logo_html}
@@ -951,8 +955,23 @@ def render_statement(title, df_annual, df_quarterly, key_prefix):
     st.write("**Datenmatrix (Klicke links auf die Zeile für den Chart):**")
     
     view_df = display_df.copy()
-    for col in view_df.columns:
-        view_df[col] = view_df[col].apply(format_large_number)
+    cols = list(view_df.columns)
+    for i, col in enumerate(cols):
+        formatted_col = []
+        for idx in view_df.index:
+            val = view_df.loc[idx, col]
+            val_str = format_large_number(val)
+            
+            # Vergleiche mit Vorperiode (Spalte weiter rechts, da Yahoo meist neu -> alt sortiert)
+            if i + 1 < len(cols):
+                prev_val = view_df.loc[idx, cols[i+1]]
+                if pd.notna(val) and pd.notna(prev_val) and prev_val != 0:
+                    growth = ((val - prev_val) / abs(prev_val)) * 100
+                    sign = "+" if growth > 0 else ""
+                    val_str = f"{val_str} ({sign}{growth:.1f}%)"
+                    
+            formatted_col.append(val_str)
+        view_df[col] = formatted_col
         
     selection_event = st.dataframe(
         view_df, 
@@ -1001,6 +1020,7 @@ def render_statement(title, df_annual, df_quarterly, key_prefix):
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
             st.plotly_chart(fig, use_container_width=True)
+
 
 # ==========================================
 # UI TABS & LAYOUT
@@ -1197,7 +1217,6 @@ with tab3:
     col_c1, col_c2, col_c3 = st.columns([1, 1.5, 1.5])
     with col_c1:
         st.markdown(f"**Aktueller Ticker:** `{global_ticker if global_ticker else 'Keiner'}`")
-        ticker_input_chart = global_ticker
     with col_c2:
         overlay_ind = st.multiselect("Overlays (im Chart):", ["SMA 50", "SMA 200", "RP2 Intrinsic Value", "Liquiditätswert pro Aktie", "Greenwald Valuation"])
     with col_c3:
@@ -1259,14 +1278,14 @@ with tab3:
                 st.caption("3. Bewertung & WACC")
                 g8, g9 = st.columns(2)
                 greenwald_params['wacc'] = g8.number_input("WACC (Kapitalkosten)", value=0.10, step=0.005)
-            greenwald_params['margin_safety'] = g9.number_input("Sicherheitsmarge (MoS)", value=0.33, step=0.05)
+                greenwald_params['margin_safety'] = g9.number_input("Sicherheitsmarge (MoS)", value=0.33, step=0.05)
             
     st.markdown("---")
     
-    if ticker_input_chart:
-        with st.spinner(f"Lade Kurs- und Fundamentaldaten für {ticker_input_chart}..."):
+    if global_ticker:
+        with st.spinner(f"Lade Kurs- und Fundamentaldaten für {global_ticker}..."):
             try:
-                df_chart = yf.download(ticker_input_chart, period="10y", interval="1wk")
+                df_chart = yf.download(global_ticker, period="10y", interval="1wk")
                 
                 if not df_chart.empty:
                     if isinstance(df_chart.columns, pd.MultiIndex):
@@ -1288,20 +1307,20 @@ with tab3:
                         fig.add_trace(go.Scatter(x=df_chart.index, y=calc_sma(df_chart['Close'], 200), line=dict(color='orange', width=2), name="SMA 200"), row=1, col=1)
                         
                     if "RP2 Intrinsic Value" in overlay_ind:
-                        df_iv = calc_rp2_intrinsic(df_chart, ticker_input_chart, rp2iv_params)
+                        df_iv = calc_rp2_intrinsic(df_chart, global_ticker, rp2iv_params)
                         if not df_iv.empty:
                             fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['IntrinsicValue'], line=dict(color='blue', width=2), name="Intrinsischer Wert"), row=1, col=1)
                             fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['CurrentIntrinsic'], line=dict(color='gold', width=2), name="Intrinsisch (ohne Wachstum)"), row=1, col=1)
                                 
                     if "Liquiditätswert pro Aktie" in overlay_ind:
-                        df_iv = calc_rp2_intrinsic(df_chart, ticker_input_chart, rp2iv_params)
+                        df_iv = calc_rp2_intrinsic(df_chart, global_ticker, rp2iv_params)
                         if not df_iv.empty:
                             fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['Val_PS'], line=dict(color='gray', width=2), name="Konservative Vermögenssumme"), row=1, col=1)
                             fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['Val_PSH'], line=dict(color='darkgray', width=2), name="Obere Vermögenssumme"), row=1, col=1)
                             fig.add_trace(go.Scatter(x=df_iv.index, y=df_iv['Val_PSTOT'], line=dict(color='lightblue', width=2), name="Summe mit allen Verb."), row=1, col=1)
                     
                     if "Greenwald Valuation" in overlay_ind:
-                        df_gw = calc_greenwald_valuation(df_chart, ticker_input_chart, greenwald_params)
+                        df_gw = calc_greenwald_valuation(df_chart, global_ticker, greenwald_params)
                         if not df_gw.empty:
                             fig.add_trace(go.Scatter(x=df_gw.index, y=df_gw['EPV_PS'], line=dict(color='green', width=2), name="EPV (Ertragskraft)"), row=1, col=1)
                             fig.add_trace(go.Scatter(x=df_gw.index, y=df_gw['AV_PS'], line=dict(color='orange', width=2), name="AV (Reproduktion)"), row=1, col=1)
@@ -1328,25 +1347,25 @@ with tab3:
                             fig.add_hline(y=30, line_dash="dot", line_color="green", row=current_row, col=1)
                             
                         elif ind == "RP2 Indikator (SinepTrader)":
-                            rp2_vals = calc_rp2_indicator(df_chart, ticker_input_chart)
+                            rp2_vals = calc_rp2_indicator(df_chart, global_ticker)
                             colors = ['#26a69a' if val >= 0 else '#ef5350' for val in rp2_vals]
                             fig.add_trace(go.Bar(x=rp2_vals.index, y=rp2_vals, marker_color=colors, name="RP2"), row=current_row, col=1)
                             fig.add_hline(y=0, line_dash="dot", line_color="gray", row=current_row, col=1)
                             
                         elif ind == "RP2 CF Indikator (SinepTrader)":
-                            rp2_cf_vals = calc_rp2_cf_indicator(df_chart, ticker_input_chart)
+                            rp2_cf_vals = calc_rp2_cf_indicator(df_chart, global_ticker)
                             colors = ['#26a69a' if pd.notna(val) and val >= 0 else '#ef5350' for val in rp2_cf_vals]
                             fig.add_trace(go.Bar(x=rp2_cf_vals.index, y=rp2_cf_vals, marker_color=colors, name="RP2 CF"), row=current_row, col=1)
                             fig.add_hline(y=0, line_dash="dot", line_color="gray", row=current_row, col=1)
                             
                         elif ind == "RP2 PEG Indikator (SinepTrader)":
-                            rp2_peg_vals = calc_rp2_peg_indicator(df_chart, ticker_input_chart)
+                            rp2_peg_vals = calc_rp2_peg_indicator(df_chart, global_ticker)
                             colors = ['#26a69a' if pd.notna(val) and val >= 0 else '#ef5350' for val in rp2_peg_vals]
                             fig.add_trace(go.Bar(x=rp2_peg_vals.index, y=rp2_peg_vals, marker_color=colors, name="RP2 PEG"), row=current_row, col=1)
                             fig.add_hline(y=0, line_dash="dot", line_color="gray", row=current_row, col=1)
                             
                         elif ind == "RP2 P E (SinepTrader)":
-                            df_pe = calc_rp2_pe_indicator(df_chart, ticker_input_chart)
+                            df_pe = calc_rp2_pe_indicator(df_chart, global_ticker)
                             if not df_pe.empty:
                                 fig.add_trace(go.Scatter(x=df_pe.index, y=df_pe['PE'], line=dict(color='blue', width=2), name="P/E"), row=current_row, col=1)
                                 fig.add_trace(go.Scatter(x=df_pe.index, y=df_pe['Average'], line=dict(color='gray', width=1.5), name="SMA 300"), row=current_row, col=1)
@@ -1354,7 +1373,7 @@ with tab3:
                                 fig.add_trace(go.Scatter(x=df_pe.index, y=df_pe['Sell'], line=dict(color='red', width=1, dash='dash'), name="Sell Zone"), row=current_row, col=1)
                                 
                         elif ind == "RP2 EV EBITDA (SinepTrader)":
-                            df_ev = calc_rp2_ev_ebitda_indicator(df_chart, ticker_input_chart)
+                            df_ev = calc_rp2_ev_ebitda_indicator(df_chart, global_ticker)
                             if not df_ev.empty:
                                 fig.add_trace(go.Scatter(x=df_ev.index, y=df_ev['EV_EBITDA'], line=dict(color='blue', width=2), name="EV/EBITDA"), row=current_row, col=1)
                                 fig.add_trace(go.Scatter(x=df_ev.index, y=df_ev['Average'], line=dict(color='gray', width=1.5), name="SMA 300"), row=current_row, col=1)
@@ -1362,7 +1381,7 @@ with tab3:
                                 fig.add_trace(go.Scatter(x=df_ev.index, y=df_ev['Sell'], line=dict(color='red', width=1, dash='dash'), name="Sell Zone"), row=current_row, col=1)
                                 
                         elif ind == "RP2 EV Sales (SinepTrader)":
-                            df_sales = calc_rp2_ev_sales_indicator(df_chart, ticker_input_chart)
+                            df_sales = calc_rp2_ev_sales_indicator(df_chart, global_ticker)
                             if not df_sales.empty:
                                 fig.add_trace(go.Scatter(x=df_sales.index, y=df_sales['EV_Sales'], line=dict(color='blue', width=2), name="EV/Sales"), row=current_row, col=1)
                                 fig.add_trace(go.Scatter(x=df_sales.index, y=df_sales['Average'], line=dict(color='gray', width=1.5), name="SMA 300"), row=current_row, col=1)
@@ -1370,7 +1389,7 @@ with tab3:
                                 fig.add_trace(go.Scatter(x=df_sales.index, y=df_sales['Sell'], line=dict(color='red', width=1, dash='dash'), name="Sell Zone"), row=current_row, col=1)
                                 
                         elif ind == "RP2 P FCF (SinepTrader)":
-                            df_p_fcf = calc_rp2_p_fcf_indicator(df_chart, ticker_input_chart)
+                            df_p_fcf = calc_rp2_p_fcf_indicator(df_chart, global_ticker)
                             if not df_p_fcf.empty:
                                 fig.add_trace(go.Scatter(x=df_p_fcf.index, y=df_p_fcf['P_FCF'], line=dict(color='blue', width=2), name="P/FCF"), row=current_row, col=1)
                                 fig.add_trace(go.Scatter(x=df_p_fcf.index, y=df_p_fcf['Average'], line=dict(color='gray', width=1.5), name="SMA 300"), row=current_row, col=1)
@@ -1396,7 +1415,6 @@ with tab4:
     st.header("🧮 Bewertungsrechner (Valuation Hub)")
     st.write("Berechne den fairen Wert (Intrinsic Value) eines Unternehmens mit verschiedenen finanzmathematischen Modellen.")
     
-    # Standardwerte
     defaults = {
         "price": 100.0, "shares": 1.0, "fcf": 100.0, "eps": 5.0, 
         "net_debt": 0.0, "div_yield": 0.0, "div_rate": 0.0
@@ -1407,20 +1425,17 @@ with tab4:
         
         def safe_float(val, fallback=0.0):
             try:
-                if pd.isna(val):
-                    return fallback
+                if pd.isna(val): return fallback
                 return float(val) if val is not None else fallback
             except:
                 return fallback
 
-        # Aktueller Aktienkurs (Robuster Fallback, falls Yahoo Finance "currentPrice" versteckt)
+        # 1. PREIS
         price_val = info.get("currentPrice")
         if price_val is None or pd.isna(price_val):
             price_val = info.get("previousClose")
         if price_val is None or pd.isna(price_val):
             price_val = info.get("regularMarketPrice")
-            
-        # Ultrakurzer Notfall-Fallback aus der Kurshistorie (für z.B. europäische Aktien)
         if price_val is None or pd.isna(price_val):
             try:
                 temp_hist = yf.download(global_ticker, period="1d", progress=False)
@@ -1429,20 +1444,18 @@ with tab4:
                     price_val = float(val.iloc[0]) if isinstance(val, pd.Series) else float(val)
             except:
                 pass
-
         defaults["price"] = safe_float(price_val, 100.0)
         
-        # Shares präzise aus der GuV ziehen (Fallback: Info-Objekt)
+        # 2. SHARES (Aktienanzahl)
         guv_q = global_data['guv_q']
         shares_val = info.get("sharesOutstanding", 1.0)
         if guv_q is not None and not guv_q.empty:
             guv_q_t = guv_q.T
-            # iloc[0] nimmt das aktuellste Quartal, da Yahoo neu->alt sortiert
             if 'Basic Average Shares' in guv_q_t.columns and not guv_q_t['Basic Average Shares'].dropna().empty:
                 shares_val = guv_q_t['Basic Average Shares'].dropna().iloc[0]
         defaults["shares"] = safe_float(shares_val / 1e6, 1.0) 
         
-        # TTM EPS robust berechnen (Falls Yahoo es vergisst, errechnen wir es aus Net Income & Shares selbst)
+        # 3. EPS (Gewinn pro Aktie)
         eps_val = info.get("trailingEPS")
         if eps_val is None or pd.isna(eps_val):
             if guv_q is not None and not guv_q.empty:
@@ -1455,25 +1468,25 @@ with tab4:
                 
                 if shares_val > 0:
                     eps_val = net_income / shares_val
-                    
         defaults["eps"] = safe_float(eps_val, 5.0)
+        
+        # 4. DIVIDENDE
         defaults["div_rate"] = safe_float(info.get("dividendRate"), 0.0)
         
-        # FCF (Trailing Twelve Months) aus den echten Quartals-Cashflows ziehen
+        # 5. FCF (Free Cash Flow)
         cf = global_data['cashflow_q']
         fcf_val = info.get("freeCashflow", 0)
         if cf is not None and not cf.empty:
             cf_t = cf.T
             if 'Free Cash Flow' in cf_t.columns:
-                fcf_val = cf_t['Free Cash Flow'].head(4).sum() # Letzte 4 Quartale summieren
+                fcf_val = cf_t['Free Cash Flow'].head(4).sum()
             elif 'Operating Cash Flow' in cf_t.columns and 'Capital Expenditure' in cf_t.columns:
                 ocf = cf_t['Operating Cash Flow'].head(4).sum()
                 capex = cf_t['Capital Expenditure'].head(4).sum()
                 fcf_val = ocf - abs(capex)
-                
         defaults["fcf"] = safe_float(fcf_val / 1e6, 100.0) if fcf_val else 100.0
         
-        # Netto-Schulden (Schulden - Cash) präzise aus der Quartals-Bilanz lesen
+        # 6. NETTO-SCHULDEN
         bs = global_data['bilanz_q']
         total_debt = info.get("totalDebt", 0)
         cash = info.get("totalCash", 0)
@@ -1493,12 +1506,9 @@ with tab4:
         
     st.markdown("---")
     
-    # Sub-Tabs für die Modelle
     sub_dcf, sub_graham, sub_ddm = st.tabs(["📊 DCF (Discounted Cash Flow)", "🏛️ Graham Formel", "💸 Dividend Discount Model"])
     
-    # ==========================================
     # MODELL 1: DCF
-    # ==========================================
     with sub_dcf:
         st.markdown("### Discounted Cash Flow Modell (10 Jahre)")
         st.write("Berechnet den Barwert aller zukünftigen Cashflows. Ideal für Unternehmen mit stabilen, vorhersehbaren Zahlungsströmen.")
@@ -1520,21 +1530,17 @@ with tab4:
             if dcf_shares <= 0 or dcf_wacc <= dcf_gt:
                 st.error("Fehler: Aktienanzahl muss > 0 sein und WACC muss größer als das terminale Wachstum sein.")
             else:
-                # Cashflows projizieren
                 cf_projections = []
                 current_cf = dcf_fcf
                 
-                # Jahre 1-5
                 for i in range(1, 6):
                     current_cf *= (1 + dcf_g1)
                     cf_projections.append(current_cf / ((1 + dcf_wacc) ** i))
                     
-                # Jahre 6-10
                 for i in range(6, 11):
                     current_cf *= (1 + dcf_g2)
                     cf_projections.append(current_cf / ((1 + dcf_wacc) ** i))
                     
-                # Terminal Value
                 terminal_value = (current_cf * (1 + dcf_gt)) / (dcf_wacc - dcf_gt)
                 pv_terminal_value = terminal_value / ((1 + dcf_wacc) ** 10)
                 
@@ -1550,9 +1556,7 @@ with tab4:
                 res2.metric("Aktueller Kurs", f"${dcf_price:.2f}")
                 res3.metric("Margin of Safety", f"{margin_of_safety:.1f}%", delta="Unterbewertet" if margin_of_safety > 0 else "Überbewertet", delta_color="normal" if margin_of_safety > 0 else "inverse")
 
-    # ==========================================
     # MODELL 2: GRAHAM FORMEL
-    # ==========================================
     with sub_graham:
         st.markdown("### Benjamin Graham Formel")
         st.write("Die modifizierte Formel von Benjamin Graham: `V = (EPS * (8.5 + 2g) * 4.4) / Y`")
@@ -1578,9 +1582,7 @@ with tab4:
                 rg2.metric("Aktueller Kurs", f"${graham_price:.2f}")
                 rg3.metric("Margin of Safety", f"{mos_graham:.1f}%", delta="Unterbewertet" if mos_graham > 0 else "Überbewertet", delta_color="normal" if mos_graham > 0 else "inverse")
 
-    # ==========================================
     # MODELL 3: DDM
-    # ==========================================
     with sub_ddm:
         st.markdown("### Dividend Discount Model (Gordon Growth)")
         st.write("Bewertet eine Aktie basierend auf dem Barwert ihrer zukünftigen, stetig wachsenden Dividenden. Nur für Dividendenaktien geeignet.")
