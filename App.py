@@ -1030,12 +1030,11 @@ if global_ticker:
         if not global_data:
             st.error(f"Konnte keine Daten für {global_ticker} finden.")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "🔍 Einzel-Analyse", 
     "🎯 Screener", 
     "📈 Kursverlauf & Indikatoren", 
-    "🏛️ Greenwald Valuation", 
-    "🧮 Bewertungsrechner"
+    "🧮 Bewertungsrechner Hub"
 ])
 
 with tab1:
@@ -1414,57 +1413,7 @@ with tab3:
                 st.error(f"Fehler beim Abrufen der Kursdaten: {e}")
 
 with tab4:
-    st.header("🏛️ Greenwald Valuation Framework")
-    st.markdown("""
-    **Earnings Power Value (EPV) vs. Asset Value (AV)** von Bruce Greenwald (Columbia University).
-    Dieses Modell analysiert die wirkliche Ertragskraft ohne unzuverlässige langfristige Wachstumsprognosen.
-    """)
-    
-    if global_ticker and global_data and global_data['info']:
-        try:
-            df_dummy = yf.download(global_ticker, period="1y", interval="1wk", progress=False)
-            if isinstance(df_dummy.columns, pd.MultiIndex):
-                df_dummy.columns = df_dummy.columns.droplevel(1)
-            
-            df_gw_live = calc_greenwald_valuation(df_dummy, global_ticker, greenwald_params)
-            
-            if not df_gw_live.empty:
-                latest_av = df_gw_live['AV_PS'].dropna().iloc[-1] if not df_gw_live['AV_PS'].dropna().empty else 0
-                latest_epv = df_gw_live['EPV_PS'].dropna().iloc[-1] if not df_gw_live['EPV_PS'].dropna().empty else 0
-                latest_buy = df_gw_live['Buy_Price'].dropna().iloc[-1] if not df_gw_live['Buy_Price'].dropna().empty else 0
-                latest_moat = df_gw_live['Franchise_Value'].dropna().iloc[-1] if not df_gw_live['Franchise_Value'].dropna().empty else 0
-                
-                cur_price = df_dummy['Close'].iloc[-1]
-                
-                st.markdown("### Aktuelle Greenwald Kennzahlen")
-                gw_col1, gw_col2, gw_col3, gw_col4 = st.columns(4)
-                gw_col1.metric("Asset Value (AV) / Aktie", f"${latest_av:.2f}")
-                gw_col2.metric("Earnings Power Value (EPV)", f"${latest_epv:.2f}")
-                gw_col3.metric("Kaufpreis inkl. MoS", f"${latest_buy:.2f}")
-                gw_col4.metric("Franchise Value (Moat)", f"{latest_moat*100:.1f}%", 
-                               delta="Wettbewerbsvorteil (Moat)" if latest_moat > 0 else "Kein Moat",
-                               delta_color="normal" if latest_moat > 0 else "inverse")
-                
-                st.markdown("---")
-                st.markdown("### Interpretation & Strategie")
-                if latest_epv > latest_av:
-                    st.success(f"**Starker Wettbewerbsvorteil (Burggraben):** Der EPV (${latest_epv:.2f}) liegt deutlich über dem Asset Value (${latest_av:.2f}). Das Unternehmen verdient mehr als seine reine Substanz vermuten lässt.")
-                else:
-                    st.warning(f"**Kein signifikanter Burggraben:** Der EPV (${latest_epv:.2f}) liegt unter oder nahe am Asset Value (${latest_av:.2f}). Es findet keine nennenswerte Überrendite statt.")
-                    
-                if cur_price <= latest_buy:
-                    st.info(f"**Kaufgelegenheit nach Margin of Safety:** Der Kurs (${cur_price:.2f}) handelt unter dem Zielkaufpreis von ${latest_buy:.2f}.")
-                else:
-                    st.write(f"Der aktuelle Kurs (${cur_price:.2f}) liegt über dem konservativen Einstiegspreis (${latest_buy:.2f}).")
-            else:
-                st.warning("Nicht genügend Bilanzdaten für die Greenwald-Analyse vorhanden.")
-        except Exception as e:
-            st.error(f"Fehler bei Greenwald Berechnung: {e}")
-    else:
-        st.info("Bitte gib oben einen Ticker ein, um die Greenwald-Bewertung zu berechnen.")
-
-with tab5:
-    st.header("🧮 Bewertungsrechner (Valuation Hub)")
+    st.header("🧮 Bewertungsrechner Hub")
     st.write("Berechne den fairen Wert (Intrinsic Value) eines Unternehmens mit verschiedenen finanzmathematischen Modellen.")
     
     defaults = {
@@ -1552,7 +1501,12 @@ with tab5:
         
     st.markdown("---")
     
-    sub_dcf, sub_graham, sub_ddm = st.tabs(["📊 DCF (Discounted Cash Flow)", "🏛️ Graham Formel", "💸 Dividend Discount Model"])
+    sub_dcf, sub_greenwald, sub_graham, sub_ddm = st.tabs([
+        "📊 DCF (Discounted Cash Flow)", 
+        "🏛️ Greenwald Valuation", 
+        "🏛️ Graham Formel", 
+        "💸 Dividend Discount Model"
+    ])
     
     with sub_dcf:
         st.markdown("### Discounted Cash Flow Modell (10 Jahre)")
@@ -1600,6 +1554,62 @@ with tab5:
                 res1.metric("Fairer Wert (pro Aktie)", f"${intrinsic_value_per_share:.2f}")
                 res2.metric("Aktueller Kurs", f"${dcf_price:.2f}")
                 res3.metric("Margin of Safety", f"{margin_of_safety:.1f}%", delta="Unterbewertet" if margin_of_safety > 0 else "Überbewertet", delta_color="normal" if margin_of_safety > 0 else "inverse")
+
+    with sub_greenwald:
+        st.markdown("### Greenwald Valuation Framework")
+        st.markdown("""
+        **Earnings Power Value (EPV) vs. Asset Value (AV)** von Bruce Greenwald (Columbia University).
+        Dieses Modell analysiert die wirkliche Ertragskraft ohne unzuverlässige langfristige Wachstumsprognosen.
+        """)
+        
+        if global_ticker and global_data and global_data['info']:
+            try:
+                df_dummy = yf.download(global_ticker, period="1y", interval="1wk", progress=False)
+                if isinstance(df_dummy.columns, pd.MultiIndex):
+                    df_dummy.columns = df_dummy.columns.droplevel(1)
+                
+                default_gw_params = {
+                    'cash_factor': 1.0, 'recv_factor': 0.98, 'inv_factor': 1.0, 'ppe_factor': 1.2,
+                    'use_intangibles': True, 'rnd_years': 2.0, 'sga_years': 1.0,
+                    'wacc': 0.10, 'margin_safety': 0.33
+                }
+                
+                df_gw_live = calc_greenwald_valuation(df_dummy, global_ticker, default_gw_params)
+                
+                if not df_gw_live.empty:
+                    latest_av = df_gw_live['AV_PS'].dropna().iloc[-1] if not df_gw_live['AV_PS'].dropna().empty else 0
+                    latest_epv = df_gw_live['EPV_PS'].dropna().iloc[-1] if not df_gw_live['EPV_PS'].dropna().empty else 0
+                    latest_buy = df_gw_live['Buy_Price'].dropna().iloc[-1] if not df_gw_live['Buy_Price'].dropna().empty else 0
+                    latest_moat = df_gw_live['Franchise_Value'].dropna().iloc[-1] if not df_gw_live['Franchise_Value'].dropna().empty else 0
+                    
+                    cur_price = df_dummy['Close'].iloc[-1]
+                    
+                    st.markdown("#### Aktuelle Greenwald Kennzahlen")
+                    gw_col1, gw_col2, gw_col3, gw_col4 = st.columns(4)
+                    gw_col1.metric("Asset Value (AV) / Aktie", f"${latest_av:.2f}")
+                    gw_col2.metric("Earnings Power Value (EPV)", f"${latest_epv:.2f}")
+                    gw_col3.metric("Kaufpreis inkl. MoS", f"${latest_buy:.2f}")
+                    gw_col4.metric("Franchise Value (Moat)", f"{latest_moat*100:.1f}%", 
+                                   delta="Wettbewerbsvorteil (Moat)" if latest_moat > 0 else "Kein Moat",
+                                   delta_color="normal" if latest_moat > 0 else "inverse")
+                    
+                    st.markdown("---")
+                    st.markdown("#### Interpretation & Strategie")
+                    if latest_epv > latest_av:
+                        st.success(f"**Starker Wettbewerbsvorteil (Burggraben):** Der EPV (${latest_epv:.2f}) liegt deutlich über dem Asset Value (${latest_av:.2f}). Das Unternehmen verdient mehr als seine reine Substanz vermuten lässt.")
+                    else:
+                        st.warning(f"**Kein signifikanter Burggraben:** Der EPV (${latest_epv:.2f}) liegt unter oder nahe am Asset Value (${latest_av:.2f}). Es findet keine nennenswerte Überrendite statt.")
+                        
+                    if cur_price <= latest_buy:
+                        st.info(f"**Kaufgelegenheit nach Margin of Safety:** Der Kurs (${cur_price:.2f}) handelt unter dem Zielkaufpreis von ${latest_buy:.2f}.")
+                    else:
+                        st.write(f"Der aktuelle Kurs (${cur_price:.2f}) liegt über dem konservativen Einstiegspreis (${latest_buy:.2f}).")
+                else:
+                    st.warning("Nicht genügend Bilanzdaten für die Greenwald-Analyse vorhanden.")
+            except Exception as e:
+                st.error(f"Fehler bei Greenwald Berechnung: {e}")
+        else:
+            st.info("Bitte gib oben einen Ticker ein, um die Greenwald-Bewertung zu berechnen.")
 
     with sub_graham:
         st.markdown("### Benjamin Graham Formel")
