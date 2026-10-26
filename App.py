@@ -1005,20 +1005,27 @@ def render_statement(title, df_annual, df_quarterly, key_prefix):
 # ==========================================
 # UI TABS & LAYOUT
 # ==========================================
+st.markdown("### 🌐 Globale Ticker-Suche")
+global_ticker = st.text_input("Ticker-Symbol für alle Tabs (z.B. AAPL, MSFT, SAP):", "").upper()
+
+global_data = None
+if global_ticker:
+    with st.spinner(f"Lade Basisdaten für {global_ticker}..."):
+        global_data = load_stock_data(global_ticker)
+        if not global_data:
+            st.error(f"Konnte keine Daten für {global_ticker} finden.")
+
 tab1, tab2, tab3, tab4 = st.tabs(["🔍 Einzel-Analyse", "🎯 Screener", "📈 Kursverlauf", "🧮 Bewertungsrechner"])
 
 with tab1:
     st.header("Aktie analysieren")
-    ticker_input = st.text_input("Ticker-Symbol eingeben (z.B. AAPL, MSFT, SAP):").upper()
     
-    if ticker_input:
-        data = load_stock_data(ticker_input)
+    if global_ticker and global_data and global_data['info']:
+        data = global_data
+        info = data['info']
+        st.success(f"Daten für **{info.get('shortName', global_ticker)}** ({info.get('country', 'N/A')}) geladen!")
         
-        if data and data['info']:
-            info = data['info']
-            st.success(f"Daten für **{info.get('shortName', ticker_input)}** ({info.get('country', 'N/A')}) geladen!")
-            
-            mcap = info.get('marketCap', 0) / 1e9
+        mcap = info.get('marketCap', 0) / 1e9
             kgv = info.get('trailingPE', np.nan)
             kbv = info.get('priceToBook', np.nan)
             roic = data['calc_roic'] * 100 if not np.isnan(data['calc_roic']) else np.nan
@@ -1076,13 +1083,15 @@ with tab1:
                 else:
                     st.write("Keine Insider-Daten verfügbar.")
             with sub6:
-                if data['insider_trans'] is not None and not data['insider_trans'].empty:
-                    df_trans = data['insider_trans'].copy()
-                    st.dataframe(df_trans, use_container_width=True)
-                else:
-                    st.write("Keine aktuellen Insider-Transaktionen gefunden.")
-        else:
-            st.error("Ticker nicht gefunden oder keine Daten verfügbar.")
+            if data['insider_trans'] is not None and not data['insider_trans'].empty:
+                df_trans = data['insider_trans'].copy()
+                st.dataframe(df_trans, use_container_width=True)
+            else:
+                st.write("Keine aktuellen Insider-Transaktionen gefunden.")
+    elif not global_ticker:
+        st.info("Bitte gib oben einen Ticker ein, um die Analyse zu starten.")
+    else:
+        st.error("Ticker nicht gefunden oder keine Daten verfügbar.")
 
 with tab2:
     st.header("Globaler Screener")
@@ -1161,7 +1170,8 @@ with tab3:
     
     col_c1, col_c2, col_c3 = st.columns([1, 1.5, 1.5])
     with col_c1:
-        ticker_input_chart = st.text_input("Ticker-Symbol:", key="chart_ticker").upper()
+        st.markdown(f"**Aktueller Ticker:** `{global_ticker if global_ticker else 'Keiner'}`")
+        ticker_input_chart = global_ticker
     with col_c2:
         overlay_ind = st.multiselect("Overlays (im Chart):", ["SMA 50", "SMA 200", "RP2 Intrinsic Value", "Liquiditätswert pro Aktie", "Greenwald Valuation"])
     with col_c3:
@@ -1223,10 +1233,10 @@ with tab3:
                 st.caption("3. Bewertung & WACC")
                 g8, g9 = st.columns(2)
                 greenwald_params['wacc'] = g8.number_input("WACC (Kapitalkosten)", value=0.10, step=0.005)
-                greenwald_params['margin_safety'] = g9.number_input("Sicherheitsmarge (MoS)", value=0.33, step=0.05)
-                
-        st.markdown("---")
-        
+            greenwald_params['margin_safety'] = g9.number_input("Sicherheitsmarge (MoS)", value=0.33, step=0.05)
+            
+    st.markdown("---")
+    
     if ticker_input_chart:
         with st.spinner(f"Lade Kurs- und Fundamentaldaten für {ticker_input_chart}..."):
             try:
@@ -1351,52 +1361,70 @@ with tab3:
                     )
                     
                     st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.error("Keine historischen Kursdaten gefunden.")
-            except Exception as e:
-                st.error(f"Fehler beim Abrufen der Kursdaten: {e}")
+            else:
+                st.error("Keine historischen Kursdaten gefunden.")
+        except Exception as e:
+            st.error(f"Fehler beim Abrufen der Kursdaten: {e}")
 
 with tab4:
     st.header("🧮 Bewertungsrechner (Valuation Hub)")
     st.write("Berechne den fairen Wert (Intrinsic Value) eines Unternehmens mit verschiedenen finanzmathematischen Modellen.")
     
-    # Auto-Fill Feature
-    st.markdown("### 1. Daten automatisch ausfüllen (Optional)")
-    auto_ticker = st.text_input("Ticker-Symbol eingeben, um Felder vorausgefüllt zu bekommen (z.B. AAPL):", key="auto_fill_ticker").upper()
-    
-    # Standardwerte (werden überschrieben, wenn Ticker gefunden wird)
+    # Standardwerte
     defaults = {
         "price": 100.0, "shares": 1.0, "fcf": 100.0, "eps": 5.0, 
         "net_debt": 0.0, "div_yield": 0.0, "div_rate": 0.0
     }
     
-    if auto_ticker:
-        with st.spinner(f"Lade Basisdaten für {auto_ticker}..."):
-            try:
-                tk = yf.Ticker(auto_ticker)
-                inf = tk.info
-                defaults["price"] = float(inf.get("currentPrice", inf.get("regularMarketPrice", 100.0)))
-                defaults["shares"] = float(inf.get("sharesOutstanding", 1.0) / 1e6) # in Millionen für leichtere Eingabe
-                defaults["eps"] = float(inf.get("trailingEPS", 5.0))
-                defaults["div_rate"] = float(inf.get("dividendRate", 0.0))
+    if global_ticker and global_data and global_data['info']:
+        info = global_data['info']
+        
+        # Basiswerte aus dem Info-Objekt
+        defaults["price"] = float(info.get("currentPrice", info.get("regularMarketPrice", 100.0)))
+        defaults["eps"] = float(info.get("trailingEPS", 5.0))
+        defaults["div_rate"] = float(info.get("dividendRate", 0.0))
+        
+        # Shares präzise aus der GuV ziehen (Fallback: Info-Objekt)
+        guv_q = global_data['guv_q']
+        shares_val = info.get("sharesOutstanding", 1.0)
+        if guv_q is not None and not guv_q.empty:
+            guv_q_t = guv_q.T
+            if 'Basic Average Shares' in guv_q_t.columns:
+                shares_val = guv_q_t['Basic Average Shares'].dropna().iloc[-1]
+        defaults["shares"] = float(shares_val / 1e6) 
+        
+        # FCF (Trailing Twelve Months) aus den echten Quartals-Cashflows ziehen
+        cf = global_data['cashflow_q']
+        fcf_val = info.get("freeCashflow", 0)
+        if cf is not None and not cf.empty:
+            cf_t = cf.T
+            if 'Free Cash Flow' in cf_t.columns:
+                fcf_val = cf_t['Free Cash Flow'].head(4).sum() # Letzte 4 Quartale summieren
+            elif 'Operating Cash Flow' in cf_t.columns and 'Capital Expenditure' in cf_t.columns:
+                ocf = cf_t['Operating Cash Flow'].head(4).sum()
+                capex = cf_t['Capital Expenditure'].head(4).sum()
+                fcf_val = ocf - abs(capex)
                 
-                # FCF und Net Debt aus den Statements ziehen (TTM / Letztes Jahr)
-                cf = tk.cashflow
-                bs = tk.balance_sheet
-                
-                if cf is not None and not cf.empty:
-                    fcf_val = cf.loc['Free Cash Flow'].iloc[0] if 'Free Cash Flow' in cf.index else 0
-                    defaults["fcf"] = float(fcf_val / 1e6) if fcf_val else 100.0
-                
-                if bs is not None and not bs.empty:
-                    total_debt = bs.loc['Total Debt'].iloc[0] if 'Total Debt' in bs.index else 0
-                    cash = bs.loc['Cash And Cash Equivalents'].iloc[0] if 'Cash And Cash Equivalents' in bs.index else 0
-                    defaults["net_debt"] = float((total_debt - cash) / 1e6)
-                    
-                st.success(f"Daten für {inf.get('shortName', auto_ticker)} erfolgreich geladen!")
-            except Exception as e:
-                st.warning("Automatisches Laden fehlgeschlagen. Bitte Werte manuell eintragen.")
-
+        defaults["fcf"] = float(fcf_val / 1e6) if fcf_val else 100.0
+        
+        # Netto-Schulden (Schulden - Cash) präzise aus der Quartals-Bilanz lesen
+        bs = global_data['bilanz_q']
+        total_debt = info.get("totalDebt", 0)
+        cash = info.get("totalCash", 0)
+        
+        if bs is not None and not bs.empty:
+            bs_t = bs.T
+            if 'Total Debt' in bs_t.columns:
+                total_debt = bs_t['Total Debt'].dropna().iloc[0]
+            if 'Cash And Cash Equivalents' in bs_t.columns:
+                cash = bs_t['Cash And Cash Equivalents'].dropna().iloc[0]
+        
+        defaults["net_debt"] = float((total_debt - cash) / 1e6)
+        
+        st.success(f"Basisdaten für {info.get('shortName', global_ticker)} automatisch aus der globalen Analyse geladen!")
+    elif not global_ticker:
+        st.info("Tipp: Trage oben einen globalen Ticker ein, um die Modelle präzise vorauszufüllen.")
+        
     st.markdown("---")
     
     # Sub-Tabs für die Modelle
