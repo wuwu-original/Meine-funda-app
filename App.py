@@ -1421,16 +1421,17 @@ with tab4:
         "net_debt": 0.0, "div_yield": 0.0, "div_rate": 0.0
     }
     
+    def safe_float(val, fallback=0.0):
+        try:
+            if pd.isna(val): return fallback
+            return float(val) if val is not None else fallback
+        except Exception:
+            return fallback
+
     if global_ticker and global_data and global_data['info']:
         info = global_data['info']
         
-        def safe_float(val, fallback=0.0):
-            try:
-                if pd.isna(val): return fallback
-                return float(val) if val is not None else fallback
-            except Exception:
-                return fallback
-
+        # 1. Kurs ermitteln
         price_val = info.get("currentPrice")
         if price_val is None or pd.isna(price_val):
             price_val = info.get("previousClose")
@@ -1446,56 +1447,61 @@ with tab4:
                 pass
         defaults["price"] = safe_float(price_val, 100.0)
         
+        # 2. Shares ermitteln
         guv_q = global_data['guv_q']
         shares_val = info.get("sharesOutstanding", 1.0)
         if guv_q is not None and not guv_q.empty:
             guv_q_t = guv_q.T
             if 'Basic Average Shares' in guv_q_t.columns and not guv_q_t['Basic Average Shares'].dropna().empty:
-                shares_val = guv_q_t['Basic Average Shares'].dropna().iloc[0]
+                shares_val = guv_q_t['Basic Average Shares'].dropna().iloc[-1]
         defaults["shares"] = safe_float(shares_val / 1e6, 1.0) 
         
+        # 3. EPS TTM ermitteln
         eps_val = info.get("trailingEPS")
         if eps_val is None or pd.isna(eps_val):
             if guv_q is not None and not guv_q.empty:
                 guv_q_t = guv_q.T
                 net_income = 0
                 if 'Net Income' in guv_q_t.columns:
-                    net_income = guv_q_t['Net Income'].dropna().head(4).sum()
+                    net_income = guv_q_t['Net Income'].dropna().tail(4).sum()
                 elif 'Net Income Common Stockholders' in guv_q_t.columns:
-                    net_income = guv_q_t['Net Income Common Stockholders'].dropna().head(4).sum()
+                    net_income = guv_q_t['Net Income Common Stockholders'].dropna().tail(4).sum()
                 
                 if shares_val > 0:
                     eps_val = net_income / shares_val
         defaults["eps"] = safe_float(eps_val, 5.0)
         
+        # 4. Dividende
         defaults["div_rate"] = safe_float(info.get("dividendRate"), 0.0)
         
+        # 5. Free Cashflow
         cf = global_data['cashflow_q']
         fcf_val = info.get("freeCashflow", 0)
         if cf is not None and not cf.empty:
             cf_t = cf.T
             if 'Free Cash Flow' in cf_t.columns:
-                fcf_val = cf_t['Free Cash Flow'].head(4).sum()
+                fcf_val = cf_t['Free Cash Flow'].dropna().tail(4).sum()
             elif 'Operating Cash Flow' in cf_t.columns and 'Capital Expenditure' in cf_t.columns:
-                ocf = cf_t['Operating Cash Flow'].head(4).sum()
-                capex = cf_t['Capital Expenditure'].head(4).sum()
+                ocf = cf_t['Operating Cash Flow'].dropna().tail(4).sum()
+                capex = cf_t['Capital Expenditure'].dropna().tail(4).sum()
                 fcf_val = ocf - abs(capex)
         defaults["fcf"] = safe_float(fcf_val / 1e6, 100.0) if fcf_val else 100.0
         
+        # 6. Net Debt
         bs = global_data['bilanz_q']
         total_debt = info.get("totalDebt", 0)
         cash = info.get("totalCash", 0)
         
         if bs is not None and not bs.empty:
             bs_t = bs.T
-            if 'Total Debt' in bs_t.columns:
-                total_debt = bs_t['Total Debt'].dropna().iloc[0]
-            if 'Cash And Cash Equivalents' in bs_t.columns:
-                cash = bs_t['Cash And Cash Equivalents'].dropna().iloc[0]
+            if 'Total Debt' in bs_t.columns and not bs_t['Total Debt'].dropna().empty:
+                total_debt = bs_t['Total Debt'].dropna().iloc[-1]
+            if 'Cash And Cash Equivalents' in bs_t.columns and not bs_t['Cash And Cash Equivalents'].dropna().empty:
+                cash = bs_t['Cash And Cash Equivalents'].dropna().iloc[-1]
         
         defaults["net_debt"] = safe_float((total_debt - cash) / 1e6, 0.0)
         
-        st.success(f"Basisdaten für {info.get('shortName', global_ticker)} automatisch aus der globalen Analyse geladen!")
+        st.success(f"Basisdaten für **{info.get('shortName', global_ticker)}** (Kurs: ${defaults['price']:.2f}, EPS: ${defaults['eps']:.2f}, FCF: ${defaults['fcf']:.1f}M) automatisch geladen!")
     elif not global_ticker:
         st.info("Tipp: Trage oben einen globalen Ticker ein, um die Modelle präzise vorauszufüllen.")
         
@@ -1582,7 +1588,7 @@ with tab4:
                     latest_buy = df_gw_live['Buy_Price'].dropna().iloc[-1] if not df_gw_live['Buy_Price'].dropna().empty else 0
                     latest_moat = df_gw_live['Franchise_Value'].dropna().iloc[-1] if not df_gw_live['Franchise_Value'].dropna().empty else 0
                     
-                    cur_price = df_dummy['Close'].iloc[-1]
+                    cur_price = defaults["price"]
                     
                     st.markdown("#### Aktuelle Greenwald Kennzahlen")
                     gw_col1, gw_col2, gw_col3, gw_col4 = st.columns(4)
@@ -1618,7 +1624,7 @@ with tab4:
         col_g1, col_g2 = st.columns(2)
         with col_g1:
             graham_eps = st.number_input("Gewinn pro Aktie (TTM EPS)", value=defaults["eps"], step=0.5, key=f"graham_eps_{global_ticker}")
-            graham_price = st.number_input("Aktueller Aktienkurs ", value=defaults["price"], step=1.0, key=f"graham_price_{global_ticker}")
+            graham_price = st.number_input("Aktueller Aktienkurs", value=defaults["price"], step=1.0, key=f"graham_price_{global_ticker}")
         with col_g2:
             graham_g = st.number_input("Erwartetes Wachstum (%)", value=5.0, step=1.0, key=f"graham_g_{global_ticker}")
             graham_y = st.number_input("Aktuelle Rendite AAA-Unternehmensanleihen (%)", value=4.5, step=0.1, help="Aktueller Zins (Y) im Nenner.", key=f"graham_y_{global_ticker}")
@@ -1643,7 +1649,7 @@ with tab4:
         col_ddm1, col_ddm2 = st.columns(2)
         with col_ddm1:
             ddm_div = st.number_input("Aktuelle Dividende pro Aktie ($)", value=defaults["div_rate"], step=0.1, key=f"ddm_div_{global_ticker}")
-            ddm_price = st.number_input("Aktueller Aktienkurs  ", value=defaults["price"], step=1.0, key=f"ddm_price_{global_ticker}")
+            ddm_price = st.number_input("Aktueller Aktienkurs", value=defaults["price"], step=1.0, key=f"ddm_price_{global_ticker}")
         with col_ddm2:
             ddm_g = st.number_input("Erwartetes Dividenden-Wachstum (%)", value=3.0, step=0.5, key=f"ddm_g_{global_ticker}") / 100
             ddm_r = st.number_input("Geforderte Rendite (Cost of Equity %)", value=8.0, step=0.5, key=f"ddm_r_{global_ticker}") / 100
