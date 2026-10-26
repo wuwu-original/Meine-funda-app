@@ -41,11 +41,11 @@ custom_css = """
 
 /* Macht den Haupt-Container transparent, damit das Netz zwischen den Zahlen sichtbar wird */
 .block-container {
-    background-color: rgba(14, 17, 23, 0.15) !important; /* Deutlich durchsichtiger (15% statt 88%) */
+    background-color: rgba(14, 17, 23, 0.15) !important;
     border-radius: 12px;
     padding: 2rem !important;
     box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
-    backdrop-filter: blur(1px); /* Sehr wenig Blur, damit die Linien scharf bleiben */
+    backdrop-filter: blur(1px);
     margin-top: 1.5rem;
 }
 
@@ -61,10 +61,8 @@ st.markdown(custom_css, unsafe_allow_html=True)
 # ==========================================
 # APP HEADER & LOGO
 # ==========================================
-# 1. Den absoluten Pfad des aktuellen Ordners ermitteln (sicher für Cloud)
 base_dir = os.path.dirname(os.path.abspath(__file__))
 
-# 2. Automatisch nach der Logo-Datei suchen (egal ob jpg, jpeg oder png)
 logo_path = None
 for ext in ["jpg", "jpeg", "png"]:
     temp_path = os.path.join(base_dir, f"logo.{ext}")
@@ -73,17 +71,12 @@ for ext in ["jpg", "jpeg", "png"]:
         break
 
 if logo_path:
-    # Bild in Base64 umwandeln, damit es in HTML dargestellt werden kann
     with open(logo_path, "rb") as image_file:
         encoded_string = base64.b64encode(image_file.read()).decode()
     
-    # Korrekten MIME-Type für HTML setzen
     mime_type = "image/png" if logo_path.endswith("png") else "image/jpeg"
-    
-    # Bild rendern (mit object-fit für saubere Proportionen)
     logo_html = f"<img src='data:{mime_type};base64,{encoded_string}' style='width: 90px; height: 90px; object-fit: contain; border-radius: 12px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);'>"
 else:
-    # Fallback, falls das Bild immer noch nicht gefunden wird
     logo_html = "<div style='background: linear-gradient(135deg, #26a69a 0%, #00796b 100%); width: 90px; height: 90px; display: flex; align-items: center; justify-content: center; border-radius: 12px; color: white; font-size: 40px;'>📈</div>"
 
 st.markdown(f"""
@@ -173,7 +166,6 @@ def load_screener_data():
             marge = info.get("operatingMargins", 0) * 100 if info.get("operatingMargins") else np.nan
             kgv = info.get("trailingPE", np.nan)
             
-            # Echten RP2 Score berechnen anstatt Schätzung
             rp2_score = calc_latest_rp2(data)
                 
             data_list.append({
@@ -193,65 +185,6 @@ def load_screener_data():
             
     df = pd.DataFrame(data_list)
     return df
-
-@st.cache_data(ttl=86400) # Lädt die Liste nur 1x pro Tag (86400 Sekunden) neu
-def load_ticker_directory():
-    try:
-        # 1. S&P 500 laden
-        sp500_url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
-        sp500_table = pd.read_html(sp500_url)[0]
-        sp500_df = sp500_table[['Symbol', 'Security', 'GICS Sector']].rename(
-            columns={'Symbol': 'Ticker', 'Security': 'Name', 'GICS Sector': 'Sektor'}
-        )
-        sp500_df['Index/Land'] = 'S&P 500 (USA)'
-        
-        # 2. NASDAQ 100 laden
-        ndx_url = 'https://en.wikipedia.org/wiki/Nasdaq-100'
-        ndx_tables = pd.read_html(ndx_url)
-        ndx_table = None
-        for tbl in ndx_tables:
-            if 'Ticker' in tbl.columns and 'Company' in tbl.columns:
-                ndx_table = tbl
-                break
-        
-        if ndx_table is not None:
-            if 'GICS Sector' in ndx_table.columns:
-                sector_col = 'GICS Sector'
-            elif 'Sector' in ndx_table.columns:
-                sector_col = 'Sector'
-            else:
-                sector_col = None
-                
-            if sector_col:
-                ndx_df = ndx_table[['Ticker', 'Company', sector_col]].rename(
-                    columns={'Company': 'Name', sector_col: 'Sektor'}
-                )
-            else:
-                ndx_df = ndx_table[['Ticker', 'Company']].rename(columns={'Company': 'Name'})
-                ndx_df['Sektor'] = 'N/A'
-                
-            ndx_df['Index/Land'] = 'NASDAQ 100 (USA)'
-        else:
-            ndx_df = pd.DataFrame(columns=['Ticker', 'Name', 'Sektor', 'Index/Land'])
-            
-        # 3. DAX 40 laden
-        dax_url = 'https://de.wikipedia.org/wiki/DAX'
-        dax_table = pd.read_html(dax_url, match='Symbol')[0]
-        dax_df = dax_table[['Symbol', 'Name', 'Branche']].rename(
-            columns={'Symbol': 'Ticker', 'Branche': 'Sektor'}
-        )
-        # Suffix '.DE' anhängen, damit Yahoo Finance die deutschen Aktien erkennt
-        dax_df['Ticker'] = dax_df['Ticker'].astype(str) + '.DE'
-        dax_df['Index/Land'] = 'DAX 40 (GER)'
-        
-        # 4. Alles zusammenführen und Duplikate entfernen (falls z.B. Apple in Nasdaq und S&P500 gelistet ist)
-        combined_df = pd.concat([sp500_df, ndx_df, dax_df], ignore_index=True)
-        combined_df = combined_df.drop_duplicates(subset=['Ticker']).reset_index(drop=True)
-        
-        return combined_df
-        
-    except Exception as e:
-        return pd.DataFrame()
 
 # ==========================================
 # INDIKATOREN & BERECHNUNGEN
@@ -273,7 +206,6 @@ def calc_latest_rp2(data):
         info = data['info']
         price = info.get('currentPrice', info.get('regularMarketPrice', info.get('previousClose', 1)))
         
-        # Sicherstellen, dass die Daten chronologisch aufsteigend sind (älteste zuerst, neueste zuletzt)
         guv_q.index = pd.to_datetime(guv_q.index)
         bilanz_q.index = pd.to_datetime(bilanz_q.index)
         guv_q = guv_q.sort_index()
@@ -1073,7 +1005,7 @@ def render_statement(title, df_annual, df_quarterly, key_prefix):
 # ==========================================
 # UI TABS & LAYOUT
 # ==========================================
-tab1, tab2, tab3, tab4 = st.tabs(["🔍 Einzel-Analyse", "🎯 Screener", "📈 Kursverlauf", "📚 Ticker-Suche"])
+tab1, tab2, tab3, tab4 = st.tabs(["🔍 Einzel-Analyse", "🎯 Screener", "📈 Kursverlauf", "🧮 Bewertungsrechner"])
 
 with tab1:
     st.header("Aktie analysieren")
@@ -1186,10 +1118,8 @@ with tab2:
             min_rp2 = st.number_input("Min RP2", value=None, placeholder="Kein Limit", key="rp2_min")
             max_rp2 = st.number_input("Max RP2", value=None, placeholder="Kein Limit", key="rp2_max")
             
-        # Basis-Maske: Land muss passen
         mask = screener_df['Land'].isin(gewaehlte_laender)
         
-        # Dynamische Filterung anwenden, wenn Felder nicht leer (None) sind
         if min_mcap is not None:
             mask &= (screener_df['M.Cap (Mrd $)'].fillna(-9999) >= min_mcap)
         if max_mcap is not None:
@@ -1427,49 +1357,160 @@ with tab3:
                 st.error(f"Fehler beim Abrufen der Kursdaten: {e}")
 
 with tab4:
-    st.header("Aktien & Ticker Verzeichnis")
-    st.write("Suche nach Unternehmensnamen oder filtere nach Branchen, um das passende Ticker-Symbol für die Analyse zu finden. (Beinhaltet S&P 500, NASDAQ 100 und DAX 40)")
+    st.header("🧮 Bewertungsrechner (Valuation Hub)")
+    st.write("Berechne den fairen Wert (Intrinsic Value) eines Unternehmens mit verschiedenen finanzmathematischen Modellen.")
     
-    with st.spinner("Lade globales Ticker-Verzeichnis (via Wikipedia)..."):
-        df_tickers = load_ticker_directory()
+    # Auto-Fill Feature
+    st.markdown("### 1. Daten automatisch ausfüllen (Optional)")
+    auto_ticker = st.text_input("Ticker-Symbol eingeben, um Felder vorausgefüllt zu bekommen (z.B. AAPL):", key="auto_fill_ticker").upper()
+    
+    # Standardwerte (werden überschrieben, wenn Ticker gefunden wird)
+    defaults = {
+        "price": 100.0, "shares": 1.0, "fcf": 100.0, "eps": 5.0, 
+        "net_debt": 0.0, "div_yield": 0.0, "div_rate": 0.0
+    }
+    
+    if auto_ticker:
+        with st.spinner(f"Lade Basisdaten für {auto_ticker}..."):
+            try:
+                tk = yf.Ticker(auto_ticker)
+                inf = tk.info
+                defaults["price"] = float(inf.get("currentPrice", inf.get("regularMarketPrice", 100.0)))
+                defaults["shares"] = float(inf.get("sharesOutstanding", 1.0) / 1e6) # in Millionen für leichtere Eingabe
+                defaults["eps"] = float(inf.get("trailingEPS", 5.0))
+                defaults["div_rate"] = float(inf.get("dividendRate", 0.0))
+                
+                # FCF und Net Debt aus den Statements ziehen (TTM / Letztes Jahr)
+                cf = tk.cashflow
+                bs = tk.balance_sheet
+                
+                if cf is not None and not cf.empty:
+                    fcf_val = cf.loc['Free Cash Flow'].iloc[0] if 'Free Cash Flow' in cf.index else 0
+                    defaults["fcf"] = float(fcf_val / 1e6) if fcf_val else 100.0
+                
+                if bs is not None and not bs.empty:
+                    total_debt = bs.loc['Total Debt'].iloc[0] if 'Total Debt' in bs.index else 0
+                    cash = bs.loc['Cash And Cash Equivalents'].iloc[0] if 'Cash And Cash Equivalents' in bs.index else 0
+                    defaults["net_debt"] = float((total_debt - cash) / 1e6)
+                    
+                st.success(f"Daten für {inf.get('shortName', auto_ticker)} erfolgreich geladen!")
+            except Exception as e:
+                st.warning("Automatisches Laden fehlgeschlagen. Bitte Werte manuell eintragen.")
+
+    st.markdown("---")
+    
+    # Sub-Tabs für die Modelle
+    sub_dcf, sub_graham, sub_ddm = st.tabs(["📊 DCF (Discounted Cash Flow)", "🏛️ Graham Formel", "💸 Dividend Discount Model"])
+    
+    # ==========================================
+    # MODELL 1: DCF
+    # ==========================================
+    with sub_dcf:
+        st.markdown("### Discounted Cash Flow Modell (10 Jahre)")
+        st.write("Berechnet den Barwert aller zukünftigen Cashflows. Ideal für Unternehmen mit stabilen, vorhersehbaren Zahlungsströmen.")
         
-    if not df_tickers.empty:
-        col_search1, col_search2, col_search3 = st.columns([2, 1, 1])
+        col_d1, col_d2, col_d3 = st.columns(3)
+        with col_d1:
+            dcf_fcf = st.number_input("Aktueller Free Cash Flow (in Mio.)", value=defaults["fcf"], step=10.0, key="dcf_fcf")
+            dcf_shares = st.number_input("Ausstehende Aktien (in Mio.)", value=defaults["shares"], step=10.0, key="dcf_shares")
+            dcf_price = st.number_input("Aktueller Aktienkurs", value=defaults["price"], step=1.0, key="dcf_price")
+        with col_d2:
+            dcf_g1 = st.number_input("Wachstum Jahre 1-5 (%)", value=10.0, step=1.0, key="dcf_g1") / 100
+            dcf_g2 = st.number_input("Wachstum Jahre 6-10 (%)", value=5.0, step=1.0, key="dcf_g2") / 100
+            dcf_gt = st.number_input("Terminales Wachstum ab J10 (%)", value=2.5, step=0.5, key="dcf_gt") / 100
+        with col_d3:
+            dcf_wacc = st.number_input("Diskontierungssatz / WACC (%)", value=10.0, step=0.5, key="dcf_wacc") / 100
+            dcf_net_debt = st.number_input("Netto-Schulden (in Mio.)", value=defaults["net_debt"], step=10.0, help="Schulden minus Cash. Negative Zahl bedeutet Netto-Cash.", key="dcf_net_debt")
+            
+        if st.button("DCF Berechnen", key="btn_dcf"):
+            if dcf_shares <= 0 or dcf_wacc <= dcf_gt:
+                st.error("Fehler: Aktienanzahl muss > 0 sein und WACC muss größer als das terminale Wachstum sein.")
+            else:
+                # Cashflows projizieren
+                cf_projections = []
+                current_cf = dcf_fcf
+                
+                # Jahre 1-5
+                for i in range(1, 6):
+                    current_cf *= (1 + dcf_g1)
+                    cf_projections.append(current_cf / ((1 + dcf_wacc) ** i))
+                    
+                # Jahre 6-10
+                for i in range(6, 11):
+                    current_cf *= (1 + dcf_g2)
+                    cf_projections.append(current_cf / ((1 + dcf_wacc) ** i))
+                    
+                # Terminal Value
+                terminal_value = (current_cf * (1 + dcf_gt)) / (dcf_wacc - dcf_gt)
+                pv_terminal_value = terminal_value / ((1 + dcf_wacc) ** 10)
+                
+                enterprise_value = sum(cf_projections) + pv_terminal_value
+                equity_value = enterprise_value - dcf_net_debt
+                intrinsic_value_per_share = equity_value / dcf_shares
+                
+                margin_of_safety = ((intrinsic_value_per_share - dcf_price) / intrinsic_value_per_share) * 100 if intrinsic_value_per_share > 0 else -100
+                
+                st.markdown("#### Ergebnis DCF")
+                res1, res2, res3 = st.columns(3)
+                res1.metric("Fairer Wert (pro Aktie)", f"${intrinsic_value_per_share:.2f}")
+                res2.metric("Aktueller Kurs", f"${dcf_price:.2f}")
+                res3.metric("Margin of Safety", f"{margin_of_safety:.1f}%", delta="Unterbewertet" if margin_of_safety > 0 else "Überbewertet", delta_color="normal" if margin_of_safety > 0 else "inverse")
+
+    # ==========================================
+    # MODELL 2: GRAHAM FORMEL
+    # ==========================================
+    with sub_graham:
+        st.markdown("### Benjamin Graham Formel")
+        st.write("Die modifizierte Formel von Benjamin Graham: `V = (EPS * (8.5 + 2g) * 4.4) / Y`")
         
-        with col_search1:
-            search_term = st.text_input("🔍 Nach Name oder Ticker suchen (z.B. SAP, Apple, Microsoft):")
+        col_g1, col_g2 = st.columns(2)
+        with col_g1:
+            graham_eps = st.number_input("Gewinn pro Aktie (TTM EPS)", value=defaults["eps"], step=0.5, key="graham_eps")
+            graham_price = st.number_input("Aktueller Aktienkurs ", value=defaults["price"], step=1.0, key="graham_price")
+        with col_g2:
+            graham_g = st.number_input("Erwartetes Wachstum (%)", value=5.0, step=1.0, key="graham_g")
+            graham_y = st.number_input("Aktuelle Rendite AAA-Unternehmensanleihen (%)", value=4.5, step=0.1, help="Aktueller Zins (Y) im Nenner.", key="graham_y")
             
-        with col_search2:
-            all_sectors = sorted(df_tickers['Sektor'].dropna().unique().tolist())
-            selected_sectors = st.multiselect("Nach Branche filtern:", all_sectors)
-            
-        with col_search3:
-            all_indices = sorted(df_tickers['Index/Land'].dropna().unique().tolist())
-            selected_indices = st.multiselect("Nach Index filtern:", all_indices)
-            
-        # Dynamische Filterung
-        mask = pd.Series(True, index=df_tickers.index)
+        if st.button("Graham Wert Berechnen", key="btn_graham"):
+            if graham_y <= 0:
+                st.error("Die Anleiherendite muss größer als 0 sein.")
+            else:
+                graham_value = (graham_eps * (8.5 + 2 * graham_g) * 4.4) / graham_y
+                mos_graham = ((graham_value - graham_price) / graham_value) * 100 if graham_value > 0 else -100
+                
+                st.markdown("#### Ergebnis Graham Formel")
+                rg1, rg2, rg3 = st.columns(3)
+                rg1.metric("Graham Intrinsic Value", f"${graham_value:.2f}")
+                rg2.metric("Aktueller Kurs", f"${graham_price:.2f}")
+                rg3.metric("Margin of Safety", f"{mos_graham:.1f}%", delta="Unterbewertet" if mos_graham > 0 else "Überbewertet", delta_color="normal" if mos_graham > 0 else "inverse")
+
+    # ==========================================
+    # MODELL 3: DDM
+    # ==========================================
+    with sub_ddm:
+        st.markdown("### Dividend Discount Model (Gordon Growth)")
+        st.write("Bewertet eine Aktie basierend auf dem Barwert ihrer zukünftigen, stetig wachsenden Dividenden. Nur für Dividendenaktien geeignet.")
         
-        if search_term:
-            # Sucht im Namen ODER im Ticker, egal ob groß oder klein geschrieben
-            mask &= (df_tickers['Name'].str.contains(search_term, case=False, na=False) | 
-                     df_tickers['Ticker'].str.contains(search_term, case=False, na=False))
-                     
-        if selected_sectors:
-            mask &= df_tickers['Sektor'].isin(selected_sectors)
+        col_ddm1, col_ddm2 = st.columns(2)
+        with col_ddm1:
+            ddm_div = st.number_input("Aktuelle Dividende pro Aktie ($)", value=defaults["div_rate"], step=0.1, key="ddm_div")
+            ddm_price = st.number_input("Aktueller Aktienkurs  ", value=defaults["price"], step=1.0, key="ddm_price")
+        with col_ddm2:
+            ddm_g = st.number_input("Erwartetes Dividenden-Wachstum (%)", value=3.0, step=0.5, key="ddm_g") / 100
+            ddm_r = st.number_input("Geforderte Rendite (Cost of Equity %)", value=8.0, step=0.5, key="ddm_r") / 100
             
-        if selected_indices:
-            mask &= df_tickers['Index/Land'].isin(selected_indices)
-            
-        filtered_tickers = df_tickers[mask].reset_index(drop=True)
-        
-        st.write(f"**Treffer: {len(filtered_tickers)} Unternehmen gefunden**")
-        st.dataframe(
-            filtered_tickers, 
-            use_container_width=True,
-            column_config={
-                "Ticker": st.column_config.TextColumn("Ticker (Kopieren für Tab 1)"),
-            }
-        )
-    else:
-        st.warning("Das Verzeichnis konnte aktuell nicht geladen werden. Möglicherweise hat sich die Wikipedia-Tabelle geändert.")
+        if st.button("DDM Berechnen", key="btn_ddm"):
+            if ddm_r <= ddm_g:
+                st.error("Die geforderte Rendite muss größer als das erwartete Wachstum sein, sonst ist das Modell mathematisch ungültig.")
+            elif ddm_div <= 0:
+                st.warning("Dieses Modell funktioniert nur für Unternehmen, die eine Dividende zahlen.")
+            else:
+                next_year_div = ddm_div * (1 + ddm_g)
+                ddm_value = next_year_div / (ddm_r - ddm_g)
+                mos_ddm = ((ddm_value - ddm_price) / ddm_value) * 100 if ddm_value > 0 else -100
+                
+                st.markdown("#### Ergebnis DDM")
+                rd1, rd2, rd3 = st.columns(3)
+                rd1.metric("Fairer Wert (DDM)", f"${ddm_value:.2f}")
+                rd2.metric("Aktueller Kurs", f"${ddm_price:.2f}")
+                rd3.metric("Margin of Safety", f"{mos_ddm:.1f}%", delta="Unterbewertet" if mos_ddm > 0 else "Überbewertet", delta_color="normal" if mos_ddm > 0 else "inverse")
