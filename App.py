@@ -1381,12 +1381,31 @@ with tab4:
         
         def safe_float(val, fallback=0.0):
             try:
+                if pd.isna(val):
+                    return fallback
                 return float(val) if val is not None else fallback
             except:
                 return fallback
 
-        # Basiswerte aus dem Info-Objekt
-        defaults["price"] = safe_float(info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose"), 100.0)
+        # Aktueller Aktienkurs (Robuster Fallback, falls Yahoo Finance "currentPrice" versteckt)
+        price_val = info.get("currentPrice")
+        if price_val is None or pd.isna(price_val):
+            price_val = info.get("previousClose")
+        if price_val is None or pd.isna(price_val):
+            price_val = info.get("regularMarketPrice")
+            
+        # Ultrakurzer Notfall-Fallback aus der Kurshistorie (für z.B. europäische Aktien)
+        if price_val is None or pd.isna(price_val):
+            try:
+                temp_hist = yf.download(global_ticker, period="1d", progress=False)
+                if not temp_hist.empty:
+                    val = temp_hist['Close'].iloc[-1]
+                    price_val = float(val.iloc[0]) if isinstance(val, pd.Series) else float(val)
+            except:
+                pass
+
+        defaults["price"] = safe_float(price_val, 100.0)
+        
         defaults["eps"] = safe_float(info.get("trailingEPS"), 5.0)
         defaults["div_rate"] = safe_float(info.get("dividendRate"), 0.0)
         
