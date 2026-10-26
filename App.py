@@ -1406,17 +1406,32 @@ with tab4:
 
         defaults["price"] = safe_float(price_val, 100.0)
         
-        defaults["eps"] = safe_float(info.get("trailingEPS"), 5.0)
-        defaults["div_rate"] = safe_float(info.get("dividendRate"), 0.0)
-        
         # Shares präzise aus der GuV ziehen (Fallback: Info-Objekt)
         guv_q = global_data['guv_q']
         shares_val = info.get("sharesOutstanding", 1.0)
         if guv_q is not None and not guv_q.empty:
             guv_q_t = guv_q.T
-            if 'Basic Average Shares' in guv_q_t.columns:
-                shares_val = guv_q_t['Basic Average Shares'].dropna().iloc[-1]
+            # iloc[0] nimmt das aktuellste Quartal, da Yahoo neu->alt sortiert
+            if 'Basic Average Shares' in guv_q_t.columns and not guv_q_t['Basic Average Shares'].dropna().empty:
+                shares_val = guv_q_t['Basic Average Shares'].dropna().iloc[0]
         defaults["shares"] = safe_float(shares_val / 1e6, 1.0) 
+        
+        # TTM EPS robust berechnen (Falls Yahoo es vergisst, errechnen wir es aus Net Income & Shares selbst)
+        eps_val = info.get("trailingEPS")
+        if eps_val is None or pd.isna(eps_val):
+            if guv_q is not None and not guv_q.empty:
+                guv_q_t = guv_q.T
+                net_income = 0
+                if 'Net Income' in guv_q_t.columns:
+                    net_income = guv_q_t['Net Income'].dropna().head(4).sum()
+                elif 'Net Income Common Stockholders' in guv_q_t.columns:
+                    net_income = guv_q_t['Net Income Common Stockholders'].dropna().head(4).sum()
+                
+                if shares_val > 0:
+                    eps_val = net_income / shares_val
+                    
+        defaults["eps"] = safe_float(eps_val, 5.0)
+        defaults["div_rate"] = safe_float(info.get("dividendRate"), 0.0)
         
         # FCF (Trailing Twelve Months) aus den echten Quartals-Cashflows ziehen
         cf = global_data['cashflow_q']
