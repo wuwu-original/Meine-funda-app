@@ -1026,63 +1026,63 @@ with tab1:
         st.success(f"Daten für **{info.get('shortName', global_ticker)}** ({info.get('country', 'N/A')}) geladen!")
         
         mcap = info.get('marketCap', 0) / 1e9
-            kgv = info.get('trailingPE', np.nan)
-            kbv = info.get('priceToBook', np.nan)
-            roic = data['calc_roic'] * 100 if not np.isnan(data['calc_roic']) else np.nan
-            roc = data['calc_roc'] * 100 if not np.isnan(data['calc_roc']) else np.nan
+        kgv = info.get('trailingPE', np.nan)
+        kbv = info.get('priceToBook', np.nan)
+        roic = data['calc_roic'] * 100 if not np.isnan(data['calc_roic']) else np.nan
+        roc = data['calc_roc'] * 100 if not np.isnan(data['calc_roc']) else np.nan
+        
+        latest_rp2_score = calc_latest_rp2(data)
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric("KGV", f"{kgv:.1f}" if pd.notna(kgv) else "N/A")
+        col2.metric("KBV", f"{kbv:.1f}" if pd.notna(kbv) else "N/A")
+        col3.metric("M.Cap", f"${mcap:.1f}B" if mcap > 0 else "N/A")
+        
+        col4, col5, col6 = st.columns(3)
+        col4.metric("ROIC (ca.)", f"{roic:.1f}%" if pd.notna(roic) else "N/A")
+        col5.metric("ROC Greenblatt (ca.)", f"{roc:.1f}%" if pd.notna(roc) else "N/A")
+        col6.metric("RP2 Power Score", f"{latest_rp2_score:.1f}%" if pd.notna(latest_rp2_score) else "N/A")
+        
+        st.markdown("---")
+        
+        sub1, sub2, sub3, sub4, sub5, sub6 = st.tabs(["GuV", "Bilanz", "Cashflow", "Statistiken", "Insider Anteile", "Insider Trades"])
+        
+        with sub1: render_statement("GuV (Income Statement)", data['guv_a'], data['guv_q'], "guv")
+        with sub2: render_statement("Bilanz (Balance Sheet)", data['bilanz_a'], data['bilanz_q'], "bilanz")
+        with sub3: render_statement("Cashflow", data['cashflow_a'], data['cashflow_q'], "cf")
+        with sub4:
+            st.write("**Historische Verhältnisse**")
+            period_stats = st.radio("Zeitraum für Statistiken:", ["Quartalsweise", "Jährlich"], horizontal=True, key="radio_stats")
             
-            latest_rp2_score = calc_latest_rp2(data)
+            hist_stats = calculate_historical_stats(data['guv_q'], data['bilanz_q']) if period_stats == "Quartalsweise" else calculate_historical_stats(data['guv_a'], data['bilanz_a'])
             
-            col1, col2, col3 = st.columns(3)
-            col1.metric("KGV", f"{kgv:.1f}" if pd.notna(kgv) else "N/A")
-            col2.metric("KBV", f"{kbv:.1f}" if pd.notna(kbv) else "N/A")
-            col3.metric("M.Cap", f"${mcap:.1f}B" if mcap > 0 else "N/A")
-            
-            col4, col5, col6 = st.columns(3)
-            col4.metric("ROIC (ca.)", f"{roic:.1f}%" if pd.notna(roic) else "N/A")
-            col5.metric("ROC Greenblatt (ca.)", f"{roc:.1f}%" if pd.notna(roc) else "N/A")
-            col6.metric("RP2 Power Score", f"{latest_rp2_score:.1f}%" if pd.notna(latest_rp2_score) else "N/A")
-            
-            st.markdown("---")
-            
-            sub1, sub2, sub3, sub4, sub5, sub6 = st.tabs(["GuV", "Bilanz", "Cashflow", "Statistiken", "Insider Anteile", "Insider Trades"])
-            
-            with sub1: render_statement("GuV (Income Statement)", data['guv_a'], data['guv_q'], "guv")
-            with sub2: render_statement("Bilanz (Balance Sheet)", data['bilanz_a'], data['bilanz_q'], "bilanz")
-            with sub3: render_statement("Cashflow", data['cashflow_a'], data['cashflow_q'], "cf")
-            with sub4:
-                st.write("**Historische Verhältnisse**")
-                period_stats = st.radio("Zeitraum für Statistiken:", ["Quartalsweise", "Jährlich"], horizontal=True, key="radio_stats")
+            if hist_stats is not None and not hist_stats.empty:
+                chart_placeholder_stats = st.empty()
+                st.write("**Datenmatrix (Klicke links auf die Zeile für Trend-Analyse):**")
                 
-                hist_stats = calculate_historical_stats(data['guv_q'], data['bilanz_q']) if period_stats == "Quartalsweise" else calculate_historical_stats(data['guv_a'], data['bilanz_a'])
+                selection_event_stats = st.dataframe(
+                    hist_stats, use_container_width=True, on_select="rerun", selection_mode="multi-row", key="df_select_stats"
+                )
                 
-                if hist_stats is not None and not hist_stats.empty:
-                    chart_placeholder_stats = st.empty()
-                    st.write("**Datenmatrix (Klicke links auf die Zeile für Trend-Analyse):**")
+                selected_rows_stats = selection_event_stats.selection.rows
+                selected_metrics_stats = hist_stats.iloc[selected_rows_stats].index.tolist() if selected_rows_stats else (hist_stats.index.tolist()[:1] if not hist_stats.empty else [])
                     
-                    selection_event_stats = st.dataframe(
-                        hist_stats, use_container_width=True, on_select="rerun", selection_mode="multi-row", key="df_select_stats"
-                    )
-                    
-                    selected_rows_stats = selection_event_stats.selection.rows
-                    selected_metrics_stats = hist_stats.iloc[selected_rows_stats].index.tolist() if selected_rows_stats else (hist_stats.index.tolist()[:1] if not hist_stats.empty else [])
-                        
-                    if selected_metrics_stats:
-                        chart_data_stats = hist_stats.loc[selected_metrics_stats].T.sort_index()
-                        with chart_placeholder_stats:
-                            st.line_chart(chart_data_stats)
-                else:
-                    st.warning("Nicht genügend historische Daten vorhanden.")
-            with sub5:
-                if data['insider'] is not None and not data['insider'].empty:
-                    df_insider = data['insider'].copy()
-                    for col in df_insider.columns:
-                        if pd.api.types.is_numeric_dtype(df_insider[col]):
-                            df_insider[col] = df_insider[col].apply(lambda x: f"{x * 100:.2f}%" if pd.notna(x) else x)
-                    st.dataframe(df_insider, use_container_width=True)
-                else:
-                    st.write("Keine Insider-Daten verfügbar.")
-            with sub6:
+                if selected_metrics_stats:
+                    chart_data_stats = hist_stats.loc[selected_metrics_stats].T.sort_index()
+                    with chart_placeholder_stats:
+                        st.line_chart(chart_data_stats)
+            else:
+                st.warning("Nicht genügend historische Daten vorhanden.")
+        with sub5:
+            if data['insider'] is not None and not data['insider'].empty:
+                df_insider = data['insider'].copy()
+                for col in df_insider.columns:
+                    if pd.api.types.is_numeric_dtype(df_insider[col]):
+                        df_insider[col] = df_insider[col].apply(lambda x: f"{x * 100:.2f}%" if pd.notna(x) else x)
+                st.dataframe(df_insider, use_container_width=True)
+            else:
+                st.write("Keine Insider-Daten verfügbar.")
+        with sub6:
             if data['insider_trans'] is not None and not data['insider_trans'].empty:
                 df_trans = data['insider_trans'].copy()
                 st.dataframe(df_trans, use_container_width=True)
