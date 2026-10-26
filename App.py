@@ -1060,8 +1060,34 @@ with tab1:
                 chart_placeholder_stats = st.empty()
                 st.write("**Datenmatrix (Klicke links auf die Zeile für Trend-Analyse):**")
                 
+                view_stats = hist_stats.copy()
+                cols = list(view_stats.columns)
+                for i, col in enumerate(cols):
+                    formatted_col = []
+                    for idx in view_stats.index:
+                        val = view_stats.loc[idx, col]
+                        val_str = f"{val:.2f}" if pd.notna(val) else "N/A"
+                        
+                        # Vergleiche mit Vorperiode
+                        if i + 1 < len(cols):
+                            prev_val = view_stats.loc[idx, cols[i+1]]
+                            if pd.notna(val) and pd.notna(prev_val) and prev_val != 0:
+                                if "(%)" in str(idx):
+                                    # Margen/ROE: absolute Veränderung in Prozentpunkten (pp)
+                                    diff = val - prev_val
+                                    sign = "+" if diff > 0 else ""
+                                    val_str = f"{val_str} ({sign}{diff:.1f} pp)"
+                                else:
+                                    # Ratios (wie Current Ratio): prozentuales Wachstum
+                                    growth = ((val - prev_val) / abs(prev_val)) * 100
+                                    sign = "+" if growth > 0 else ""
+                                    val_str = f"{val_str} ({sign}{growth:.1f}%)"
+                        
+                        formatted_col.append(val_str)
+                    view_stats[col] = formatted_col
+
                 selection_event_stats = st.dataframe(
-                    hist_stats, use_container_width=True, on_select="rerun", selection_mode="multi-row", key="df_select_stats"
+                    view_stats, use_container_width=True, on_select="rerun", selection_mode="multi-row", key="df_select_stats"
                 )
                 
                 selected_rows_stats = selection_event_stats.selection.rows
