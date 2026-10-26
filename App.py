@@ -1361,10 +1361,10 @@ with tab3:
                     )
                     
                     st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.error("Keine historischen Kursdaten gefunden.")
-        except Exception as e:
-            st.error(f"Fehler beim Abrufen der Kursdaten: {e}")
+                else:
+                    st.error("Keine historischen Kursdaten gefunden.")
+            except Exception as e:
+                st.error(f"Fehler beim Abrufen der Kursdaten: {e}")
 
 with tab4:
     st.header("🧮 Bewertungsrechner (Valuation Hub)")
