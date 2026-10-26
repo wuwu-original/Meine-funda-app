@@ -1379,10 +1379,16 @@ with tab4:
     if global_ticker and global_data and global_data['info']:
         info = global_data['info']
         
+        def safe_float(val, fallback=0.0):
+            try:
+                return float(val) if val is not None else fallback
+            except:
+                return fallback
+
         # Basiswerte aus dem Info-Objekt
-        defaults["price"] = float(info.get("currentPrice", info.get("regularMarketPrice", 100.0)))
-        defaults["eps"] = float(info.get("trailingEPS", 5.0))
-        defaults["div_rate"] = float(info.get("dividendRate", 0.0))
+        defaults["price"] = safe_float(info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose"), 100.0)
+        defaults["eps"] = safe_float(info.get("trailingEPS"), 5.0)
+        defaults["div_rate"] = safe_float(info.get("dividendRate"), 0.0)
         
         # Shares präzise aus der GuV ziehen (Fallback: Info-Objekt)
         guv_q = global_data['guv_q']
@@ -1391,7 +1397,7 @@ with tab4:
             guv_q_t = guv_q.T
             if 'Basic Average Shares' in guv_q_t.columns:
                 shares_val = guv_q_t['Basic Average Shares'].dropna().iloc[-1]
-        defaults["shares"] = float(shares_val / 1e6) 
+        defaults["shares"] = safe_float(shares_val / 1e6, 1.0) 
         
         # FCF (Trailing Twelve Months) aus den echten Quartals-Cashflows ziehen
         cf = global_data['cashflow_q']
@@ -1405,7 +1411,7 @@ with tab4:
                 capex = cf_t['Capital Expenditure'].head(4).sum()
                 fcf_val = ocf - abs(capex)
                 
-        defaults["fcf"] = float(fcf_val / 1e6) if fcf_val else 100.0
+        defaults["fcf"] = safe_float(fcf_val / 1e6, 100.0) if fcf_val else 100.0
         
         # Netto-Schulden (Schulden - Cash) präzise aus der Quartals-Bilanz lesen
         bs = global_data['bilanz_q']
@@ -1419,7 +1425,7 @@ with tab4:
             if 'Cash And Cash Equivalents' in bs_t.columns:
                 cash = bs_t['Cash And Cash Equivalents'].dropna().iloc[0]
         
-        defaults["net_debt"] = float((total_debt - cash) / 1e6)
+        defaults["net_debt"] = safe_float((total_debt - cash) / 1e6, 0.0)
         
         st.success(f"Basisdaten für {info.get('shortName', global_ticker)} automatisch aus der globalen Analyse geladen!")
     elif not global_ticker:
@@ -1439,18 +1445,18 @@ with tab4:
         
         col_d1, col_d2, col_d3 = st.columns(3)
         with col_d1:
-            dcf_fcf = st.number_input("Aktueller Free Cash Flow (in Mio.)", value=defaults["fcf"], step=10.0, key="dcf_fcf")
-            dcf_shares = st.number_input("Ausstehende Aktien (in Mio.)", value=defaults["shares"], step=10.0, key="dcf_shares")
-            dcf_price = st.number_input("Aktueller Aktienkurs", value=defaults["price"], step=1.0, key="dcf_price")
+            dcf_fcf = st.number_input("Aktueller Free Cash Flow (in Mio.)", value=defaults["fcf"], step=10.0, key=f"dcf_fcf_{global_ticker}")
+            dcf_shares = st.number_input("Ausstehende Aktien (in Mio.)", value=defaults["shares"], step=10.0, key=f"dcf_shares_{global_ticker}")
+            dcf_price = st.number_input("Aktueller Aktienkurs", value=defaults["price"], step=1.0, key=f"dcf_price_{global_ticker}")
         with col_d2:
-            dcf_g1 = st.number_input("Wachstum Jahre 1-5 (%)", value=10.0, step=1.0, key="dcf_g1") / 100
-            dcf_g2 = st.number_input("Wachstum Jahre 6-10 (%)", value=5.0, step=1.0, key="dcf_g2") / 100
-            dcf_gt = st.number_input("Terminales Wachstum ab J10 (%)", value=2.5, step=0.5, key="dcf_gt") / 100
+            dcf_g1 = st.number_input("Wachstum Jahre 1-5 (%)", value=10.0, step=1.0, key=f"dcf_g1_{global_ticker}") / 100
+            dcf_g2 = st.number_input("Wachstum Jahre 6-10 (%)", value=5.0, step=1.0, key=f"dcf_g2_{global_ticker}") / 100
+            dcf_gt = st.number_input("Terminales Wachstum ab J10 (%)", value=2.5, step=0.5, key=f"dcf_gt_{global_ticker}") / 100
         with col_d3:
-            dcf_wacc = st.number_input("Diskontierungssatz / WACC (%)", value=10.0, step=0.5, key="dcf_wacc") / 100
-            dcf_net_debt = st.number_input("Netto-Schulden (in Mio.)", value=defaults["net_debt"], step=10.0, help="Schulden minus Cash. Negative Zahl bedeutet Netto-Cash.", key="dcf_net_debt")
+            dcf_wacc = st.number_input("Diskontierungssatz / WACC (%)", value=10.0, step=0.5, key=f"dcf_wacc_{global_ticker}") / 100
+            dcf_net_debt = st.number_input("Netto-Schulden (in Mio.)", value=defaults["net_debt"], step=10.0, help="Schulden minus Cash. Negative Zahl bedeutet Netto-Cash.", key=f"dcf_net_debt_{global_ticker}")
             
-        if st.button("DCF Berechnen", key="btn_dcf"):
+        if st.button("DCF Berechnen", key=f"btn_dcf_{global_ticker}"):
             if dcf_shares <= 0 or dcf_wacc <= dcf_gt:
                 st.error("Fehler: Aktienanzahl muss > 0 sein und WACC muss größer als das terminale Wachstum sein.")
             else:
@@ -1493,13 +1499,13 @@ with tab4:
         
         col_g1, col_g2 = st.columns(2)
         with col_g1:
-            graham_eps = st.number_input("Gewinn pro Aktie (TTM EPS)", value=defaults["eps"], step=0.5, key="graham_eps")
-            graham_price = st.number_input("Aktueller Aktienkurs ", value=defaults["price"], step=1.0, key="graham_price")
+            graham_eps = st.number_input("Gewinn pro Aktie (TTM EPS)", value=defaults["eps"], step=0.5, key=f"graham_eps_{global_ticker}")
+            graham_price = st.number_input("Aktueller Aktienkurs ", value=defaults["price"], step=1.0, key=f"graham_price_{global_ticker}")
         with col_g2:
-            graham_g = st.number_input("Erwartetes Wachstum (%)", value=5.0, step=1.0, key="graham_g")
-            graham_y = st.number_input("Aktuelle Rendite AAA-Unternehmensanleihen (%)", value=4.5, step=0.1, help="Aktueller Zins (Y) im Nenner.", key="graham_y")
+            graham_g = st.number_input("Erwartetes Wachstum (%)", value=5.0, step=1.0, key=f"graham_g_{global_ticker}")
+            graham_y = st.number_input("Aktuelle Rendite AAA-Unternehmensanleihen (%)", value=4.5, step=0.1, help="Aktueller Zins (Y) im Nenner.", key=f"graham_y_{global_ticker}")
             
-        if st.button("Graham Wert Berechnen", key="btn_graham"):
+        if st.button("Graham Wert Berechnen", key=f"btn_graham_{global_ticker}"):
             if graham_y <= 0:
                 st.error("Die Anleiherendite muss größer als 0 sein.")
             else:
@@ -1521,13 +1527,13 @@ with tab4:
         
         col_ddm1, col_ddm2 = st.columns(2)
         with col_ddm1:
-            ddm_div = st.number_input("Aktuelle Dividende pro Aktie ($)", value=defaults["div_rate"], step=0.1, key="ddm_div")
-            ddm_price = st.number_input("Aktueller Aktienkurs  ", value=defaults["price"], step=1.0, key="ddm_price")
+            ddm_div = st.number_input("Aktuelle Dividende pro Aktie ($)", value=defaults["div_rate"], step=0.1, key=f"ddm_div_{global_ticker}")
+            ddm_price = st.number_input("Aktueller Aktienkurs  ", value=defaults["price"], step=1.0, key=f"ddm_price_{global_ticker}")
         with col_ddm2:
-            ddm_g = st.number_input("Erwartetes Dividenden-Wachstum (%)", value=3.0, step=0.5, key="ddm_g") / 100
-            ddm_r = st.number_input("Geforderte Rendite (Cost of Equity %)", value=8.0, step=0.5, key="ddm_r") / 100
+            ddm_g = st.number_input("Erwartetes Dividenden-Wachstum (%)", value=3.0, step=0.5, key=f"ddm_g_{global_ticker}") / 100
+            ddm_r = st.number_input("Geforderte Rendite (Cost of Equity %)", value=8.0, step=0.5, key=f"ddm_r_{global_ticker}") / 100
             
-        if st.button("DDM Berechnen", key="btn_ddm"):
+        if st.button("DDM Berechnen", key=f"btn_ddm_{global_ticker}"):
             if ddm_r <= ddm_g:
                 st.error("Die geforderte Rendite muss größer als das erwartete Wachstum sein, sonst ist das Modell mathematisch ungültig.")
             elif ddm_div <= 0:
